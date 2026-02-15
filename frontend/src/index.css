@@ -1,0 +1,46 @@
+@import "tailwindcss";
+
+@theme {
+  --color-yggen-teal: #00ADB5;
+  --color-yggen-dim-teal: rgba(0, 173, 181, 0.1);
+  --color-yggen-black: #000000;
+  --color-yggen-grid: #f0f0f0;
+  
+  --background-image-grid-pattern: radial-gradient(#e5e5e5 1px, transparent 1px);
+  --background-size-grid-sm: 40px 40px;
+}
+
+@layer base {
+  body {
+    @apply bg-white text-black antialiased selection:bg-yggen-teal selection:text-white;
+    font-feature-settings: "ss01", "ss02", "cv01", "cv02";
+  }
+}
+
+/* Custom Scrollbar */
+::-webkit-scrollbar {
+  width: 4px;
+}
+
+::-webkit-scrollbar-track {
+  @apply bg-white;
+}
+
+::-webkit-scrollbar-thumb {
+  @apply bg-gray-200 rounded-full hover:bg-yggen-teal transition-colors;
+}
+
+/* Glow Utilities - Minimal */
+.glow-text {
+  text-shadow: 0 0 15px rgba(0, 173, 181, 0.3);
+}
+
+.glow-box {
+  box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.05); /* Subtle border instead of glow */
+  transition: all 0.3s ease;
+}
+
+.glow-box:hover {
+  box-shadow: 0 5px 15px rgba(0, 0, 0, 0.05);
+  border-color: var(--color-yggen-teal);
+}

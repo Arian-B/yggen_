@@ -1,0 +1,16 @@
+fastapi
+uvicorn
+langchain
+langchain-community
+langchain-openai
+openai
+python-multipart
+requests
+python-dotenv
+python-arango
+pydantic
+pydantic-settings
+langchain-google-genai
+langchain-groq
+# langchain-openai is already here
+
