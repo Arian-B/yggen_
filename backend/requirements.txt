@@ -12,5 +12,8 @@ pydantic
 pydantic-settings
 langchain-google-genai
 langchain-groq
-# langchain-openai is already here
+wikipedia-api
+wikipedia
+beautifulsoup4
+lxml
 

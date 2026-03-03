@@ -1,16 +1,17 @@
-# yggen\_
+# wikiyggen\_
 
-**yggen\_** is an AI-powered knowledge traversal engine designed to combat shallow information consumption by structuring knowledge into a directed graph of dependencies and extensions. Unlike traditional search or wiki-walking, yggen\_ enforces a recursive learning path where every concept is contextually anchored to its prerequisites and advanced applications.
+**wikiyggen\_** is an AI-enhanced Wikipedia traversal engine designed to transform shallow reading into structured, deeply connected knowledge expeditions.
 
-The system utilizes a multi-provider AI architecture to dynamically generate, validate, and expand knowledge graphs, ensuring that users traverse complex topics with varying levels of abstraction and difficulty.
+Instead of reading a flat Wikipedia page and getting lost in tabs, **wikiyggen\_** seamlessly integrates the reading experience with interactive 2D graph visualizations. As users read an article, embedded hyperlinks and "See Also" sections are visually mapped, allowing for intuitive navigation across related concepts. AI summarization provides immediate clarity without the need to read entire articles, while ML-driven tracking builds a comprehensive profile of a user's domain expertise over time.
 
 ## Core Philosophy
 
-The fundamental design principle of yggen\_ is **State-Aware Graph Growth**. The system does not merely generate isolated content; it maintains a persistent memory of the user's "expedition" (learning session).
+The fundamental design principle of wikiyggen\_ is **Visual Contextual Learning**.
 
-- **Recursive Depth**: Knowledge is not flat. Every node has a depth level relative to the root topic.
-- **Context Injection**: The AI engine is aware of the current graph structure before generating new nodes, preventing duplication and ensuring logical continuity.
-- **Guided Traversal**: Users do not manually search. The system determines the optimal next step based on the graph topology and the user's traversal history.
+- **Seamless Traversal**: Reading and graph navigation are unified. Embedded Wikipedia hyperlinks seamlessly trigger smooth animations to a 2D knowledge graph.
+- **AI Summarization**: Core insights and summaries are extracted dynamically from Wikipedia text, giving instant "TL;DR" overlays.
+- **Expertise Tracking**: The system tracks user journeys to build an evolving map of their knowledge profile and domain expertise via machine learning.
+- **Persistent Expeditions**: Explorations are saved as "Expeditions", preserving the learning path and context.
 
 ## Technology Stack
 
@@ -19,59 +20,51 @@ The fundamental design principle of yggen\_ is **State-Aware Graph Growth**. The
 - **Language**: Python 3.12+
 - **Framework**: FastAPI (High-performance async API)
 - **Database**: ArangoDB (Multi-model graph database)
+- **Data Source**: Wikipedia API
 - **AI Orchestration**: Custom AI Engine with LangChain integration
 - **Providers**:
-  - **Google Gemini** (Primary: Structure & Reasoning)
-  - **Groq / Llama 3** (Primary: High-speed Validation)
+  - **Google Gemini** (Primary: Summarization & Reasoning)
+  - **Groq / Llama 3** (Primary: High-speed summarization & insights)
   - **OpenRouter** (Fallback: Reliability)
-  - **Cohere** (Reserved: Embeddings)
 
 ### Frontend
 
 - **Framework**: React (Vite)
 - **Language**: TypeScript
 - **Styling**: TailwindCSS (Utility-first design system)
-- **Visualization**: React Flow (Interactive graph rendering)
+- **Visualization**: React Flow (Interactive 2D graph rendering)
 - **Animation**: GSAP & Framer Motion
 
 ## System Architecture
 
 ### 1. The Expedition Model
 
-An **Expedition** represents a user's unique journey through a topic. It is the root container for all state.
+An **Expedition** represents a user's unique journey initiated from a root Wikipedia search.
 
-- **Root Topic**: The starting seed concept.
-- **Global Layout**: Tracks the maximum depth reached in both prerequisite (negative) and advanced (positive) directions.
+- **Root Topic**: The starting Wikipedia page.
+- **Graph Context**: The stored graph of navigated hyperlinks and "See Also" relations.
 - **Session Memory**: Persists across browser reloads via ArangoDB.
 
-### 2. The Node Model
+### 2. Node & Link Model
 
-A **Node** is a discrete unit of knowledge.
+A **Node** represents a unique Wikipedia article.
 
-- **Topic**: The core concept name.
-- **Level**: Integer distance from the Root (0). Negative values encompass foundational knowledge; positive values encompass advanced applications.
-- **Scores**:
-  - `difficulty_score` (0-100): Technical complexity.
-  - `abstraction_score` (0-100): Theoretical vs. concrete rating.
+- **Topic/Title**: The Wikipedia entry title.
+- **Content**: HTML/AST representation of the article, parsed for interactive links.
+- **Edges (Links)**:
+  - `embedded_link`: A hyperlink found within the article text.
+  - `see_also_link`: A relation found in the Wikipedia "See Also" section.
 
-### 3. Edge Taxonomy
+### 3. AI Engine & Smart Routing
 
-Graph connections are strictly typed to enforce semantic meaning:
+The backend implements a custom **AIEngine** specialized for rapid summarization and insight extraction from raw Wikipedia text.
 
-- `prerequisite_of`: A must be known before B.
-- `advanced_of`: A is a logical extension of B.
-- `conceptual_link`: Lateral connection between parallel domains.
+- **Multi-Provider Routing**: The engine dynamically selects the optimal LLM based on task type (e.g., Groq for hyper-fast generic summaries, Gemini for deeper structural extraction).
+- **Strict JSON Validation**: All AI outputs are parsed and validated against strict schemas.
 
-### 4. AI Engine & Smart Routing
+### 4. ML Expertise Tracking
 
-The backend implements a custom **AIEngine** specialized for state-aware generation.
-
-- **Multi-Provider Routing**: The engine dynamically selects the optimal Learning Large Model (LLM) based on task type.
-  - _Structure Generation_ -> Gemini 1.5 Pro (Superior logic)
-  - _Reflection Grading_ -> Llama 3 on Groq (Low latency)
-  - _Failover_ -> GPT-4o via OpenRouter (High availability)
-- **Context Snapshots**: Before any generation request, the engine aggregates a compressed summary of the current expedition and injects it into the system prompt. This allows the AI to "see" the existing graph.
-- **Strict JSON Validation**: All AI outputs are parsed and validated against strict schemas before database insertion. Malformed outputs trigger automatic retries.
+As users traverse nodes (articles), the system aggregates metadata (categories, domains) to construct a user expertise profile, measuring depth and breadth of knowledge across different subjects.
 
 ## Directory Structure
 
@@ -85,12 +78,12 @@ app/
 │   └── connection.py       # ArangoDB connection handler
 ├── models/
 │   ├── expedition_models.py # Pydantic schemas for expeditions
-│   └── node_models.py      # Pydantic schemas for graph nodes
+│   └── user_models.py      # Tracking user expertise metrics
 ├── services/
-│   ├── ai_engine.py        # Central Orchestrator for LLM interactions
+│   ├── wikipedia_service.py # Core integration with Wikipedia API
+│   ├── ai_engine.py        # Central Orchestrator for LLM summarization
 │   ├── providers/          # Adapter pattern implementations for AI providers
-│   ├── graph_generator.py  # Logic for expanding the knowledge graph
-│   └── traversal_engine.py # Logic for determining next user steps
+│   └── graph_generator.py  # Builds graph connections from Wikipedia links
 ├── utils/
 │   └── json_validator.py   # Schema enforcement utilities
 └── main.py                 # FastAPI application entry point
@@ -101,12 +94,12 @@ app/
 ```text
 src/
 ├── components/
-│   ├── canvas/             # Custom scroll-based animation system
-│   └── layout/             # UI shell and navigation components
-├── layouts/                # Route-based layout wrappers
+│   ├── layout/             # UI shell and navigation components
+│   └── ui/                 # Summary panels, modals, knowledge indicators
 ├── pages/
-│   ├── LearningMode.tsx    # Scrollable content view
-│   └── MapMode.tsx         # React Flow graph visualization
+│   ├── LandingPage.tsx     # Wikipedia search entry
+│   ├── LearningMode.tsx    # Scrollable article view with interactive wiki links
+│   └── MapMode.tsx         # React Flow 2D graph visualization
 ├── services/
 │   └── api.ts              # Typed API client
 └── index.css               # Global styles and Tailwind directives
@@ -148,7 +141,6 @@ ARANGO_PASSWORD=your_password
 GEMINI_API_KEY=your_key
 GROQ_API_KEY=your_key
 OPENROUTER_API_KEY=your_key
-COHERE_API_KEY=your_key
 ```
 
 Run the server:
@@ -167,18 +159,11 @@ npm run dev
 
 ## Engineering Principles
 
-**Separation of Concerns**
-The AI layer is strictly decoupled from business logic. The `AIEngine` handles the "how" of intelligence (retries, context, providers), while specific services (`GraphGenerator`, `ContentGenerator`) handle the "what" (prompts, domain logic).
+**API-First Content Sourcing**
+Instead of relying on LLMs to hallucinate or generate educational content from scratch, we use the Wikipedia API as the ground truth. LLMs are strictly relegated to summarization and semantic extraction, guaranteeing factual accuracy.
 
-**Database as Source of Truth**
-The AI is stateless between requests. The ArangoDB graph defines the reality of the expedition. We do not rely on LLM conversation history for state management, eliminating context drift over long sessions.
+**Fluid UI/UX Integration**
+The transition from reading long-form text to viewing high-level graph structures must be animated and seamless to maintain the user's cognitive flow.
 
 **Provider Agnosticism**
-The system is designed to be resilient to provider outages. The `ModelRouter` and `BaseProvider` abstractions allow swapping underlying models (e.g., switching from Gemini to Claude) without changing business logic.
-
-## Roadmap
-
-- **Adaptive Traversal Engine**: Heuristics to adjust difficulty dynamically based on user reflection scores.
-- **Semantic Search**: Integration of Cohere embeddings for vector-based node lookup.
-- **Public Expeditions**: Ability to publish and share curated knowledge paths.
-- **Cloud Deployment**: Docker containerization and Kubernetes orchestration.
+The AI system is designed to be resilient to provider outages. The `ModelRouter` and `BaseProvider` abstractions allow swapping underlying models (e.g., switching from Gemini to Claude) without changing business logic.

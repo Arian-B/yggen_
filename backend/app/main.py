@@ -2,7 +2,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from app.core.config import settings
 from app.database.connection import db
-from app.routers import expedition_routes
+from app.routers import expedition_routes, auth_routes
 
 app = FastAPI(
     title=settings.PROJECT_NAME,
@@ -11,7 +11,7 @@ app = FastAPI(
 
 # CORS Configuration
 origins = [
-    "http://localhost:5173",  # Vite default port
+    "http://localhost:5173",
     "http://127.0.0.1:5173",
 ]
 
@@ -30,6 +30,7 @@ async def startup_event():
     print(f"\n🚀 ArangoDB UI available at: {settings.ARANGO_HOST}\n")
 
 # Include Routers
+app.include_router(auth_routes.router, prefix=f"{settings.API_PREFIX}/auth", tags=["Auth"])
 app.include_router(expedition_routes.router, prefix=f"{settings.API_PREFIX}/expedition", tags=["Expedition"])
 
 @app.get("/")

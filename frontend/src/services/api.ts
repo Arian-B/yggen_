@@ -1,5 +1,5 @@
 const API_BASE_URL = 'http://localhost:8000/api';
-export const CURRENT_USER_ID = "test-user-001";
+
 
 export interface NodeContent {
     node_id: string;
@@ -10,6 +10,32 @@ export interface NodeContent {
     abstraction_score: number;
     content?: string;
     sources?: string[];
+    wikipedia_url?: string;
+    summary?: string;
+    link_type?: 'embedded_link' | 'see_also_link' | null;
+    node_type?: 'standard' | 'drift';
+}
+
+export interface GraphNode {
+    node_id: string;
+    topic: string;
+    level: number;
+    link_type?: string | null;
+    node_type?: string;
+    wikipedia_url?: string;
+}
+
+export interface GraphEdge {
+    from_node_id: string;
+    to_node_id: string;
+    type: string;
+}
+
+export interface ExpeditionGraph {
+    expedition_id: string;
+    root_topic: string;
+    nodes: GraphNode[];
+    edges: GraphEdge[];
 }
 
 export interface ContinueResponse {
@@ -17,7 +43,7 @@ export interface ContinueResponse {
     reflection_required: boolean;
     message: string;
     xp_gained: number;
-    node_id?: string; // If reflection required, stays on node
+    node_id?: string;
 }
 
 export interface ReflectionResponse {
@@ -34,18 +60,25 @@ export interface UserStats {
     level: number;
 }
 
+export const getAuthHeader = (): Record<string, string> => {
+    const token = localStorage.getItem('wikiyggen_token');
+    return token ? { Authorization: `Bearer ${token}` } : {};
+};
+
 export const api = {
     expedition: {
-        create: async (topic: string) => {
+        create: async (topic: string, userId: string) => {
             const res = await fetch(`${API_BASE_URL}/expedition/create`, {
                 method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ 
-                    user_id: CURRENT_USER_ID,
-                    root_topic: topic 
-                })
+                headers: { 'Content-Type': 'application/json', ...getAuthHeader() },
+                body: JSON.stringify({ user_id: userId, root_topic: topic })
             });
             if (!res.ok) throw new Error('Failed to create expedition');
+            return res.json();
+        },
+        getGraph: async (expeditionId: string): Promise<ExpeditionGraph> => {
+            const res = await fetch(`${API_BASE_URL}/expedition/${expeditionId}/graph`);
+            if (!res.ok) throw new Error('Failed to fetch expedition graph');
             return res.json();
         }
     },
@@ -55,35 +88,56 @@ export const api = {
             if (!res.ok) throw new Error('Failed to fetch node');
             return res.json();
         },
-        continue: async (nodeId: string, expeditionId: string): Promise<ContinueResponse> => {
-            const res = await fetch(`${API_BASE_URL}/expedition/node/${nodeId}/continue`, {
+        getSummary: async (nodeId: string): Promise<{ summary: string; key_points: string[] }> => {
+            const res = await fetch(`${API_BASE_URL}/expedition/node/${nodeId}/summary`);
+            if (!res.ok) throw new Error('Failed to fetch summary');
+            return res.json();
+        },
+        checkDrift: async (nodeId: string, candidateTopic: string, expeditionId: string): Promise<{
+            score: number;
+            is_drift: boolean;
+            reason: string;
+        }> => {
+            const res = await fetch(`${API_BASE_URL}/expedition/node/${nodeId}/check-drift`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ 
-                    expedition_id: expeditionId,
-                    user_id: CURRENT_USER_ID
-                })
+                body: JSON.stringify({ candidate_topic: candidateTopic, expedition_id: expeditionId })
+            });
+            if (!res.ok) return { score: 60, is_drift: false, reason: '' }; // Fail open
+            return res.json();
+        },
+        continue: async (nodeId: string, expeditionId: string, userId: string): Promise<ContinueResponse> => {
+            const res = await fetch(`${API_BASE_URL}/expedition/node/${nodeId}/continue`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json', ...getAuthHeader() },
+                body: JSON.stringify({ expedition_id: expeditionId, user_id: userId })
             });
             if (!res.ok) throw new Error('Failed to continue');
             return res.json();
         },
-        reflect: async (nodeId: string, answer: string): Promise<ReflectionResponse> => {
+        reflect: async (nodeId: string, answer: string, userId: string): Promise<ReflectionResponse> => {
             const res = await fetch(`${API_BASE_URL}/expedition/node/${nodeId}/reflect`, {
                 method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ 
-                    user_id: CURRENT_USER_ID,
-                    answer 
-                })
+                headers: { 'Content-Type': 'application/json', ...getAuthHeader() },
+                body: JSON.stringify({ user_id: userId, answer })
             });
             if (!res.ok) throw new Error('Failed to submit reflection');
             return res.json();
         }
     },
     user: {
-        getStats: async (): Promise<UserStats> => {
-            const res = await fetch(`${API_BASE_URL}/expedition/user/${CURRENT_USER_ID}`);
+        getStats: async (userId: string): Promise<UserStats> => {
+            const res = await fetch(`${API_BASE_URL}/expedition/user/${userId}`, {
+                headers: getAuthHeader()
+            });
             if (!res.ok) throw new Error('Failed to fetch user stats');
+            return res.json();
+        },
+        getExpeditions: async (userId: string): Promise<any> => {
+            const res = await fetch(`${API_BASE_URL}/expedition/user/${userId}/expeditions`, {
+                headers: getAuthHeader()
+            });
+            if (!res.ok) throw new Error('Failed to fetch expeditions');
             return res.json();
         }
     }

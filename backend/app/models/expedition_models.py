@@ -13,11 +13,11 @@ class ExpeditionCreate(ExpeditionBase):
 class Expedition(ExpeditionBase):
     expedition_id: str = Field(default_factory=lambda: str(uuid.uuid4()))
     state: str = "active"
+    domain: str = "General"          # Primary knowledge domain (from Wikipedia categories)
     global_xp_earned: int = 0
+    nodes_visited: int = 0           # Count of articles actually read
     created_at: datetime = Field(default_factory=datetime.utcnow)
     last_activity: datetime = Field(default_factory=datetime.utcnow)
-    depth_left_max: int = 0
-    depth_right_max: int = 0
 
     class Config:
         from_attributes = True

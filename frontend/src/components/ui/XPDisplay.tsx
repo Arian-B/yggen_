@@ -1,50 +1,51 @@
 import React, { useEffect, useState } from 'react';
+import { useAuth } from '../../context/AuthContext';
 import { api } from '../../services/api';
 
 interface XPDisplayProps {
-  // Optional: trigger refresh from parent
-  refreshTrigger?: number; 
+  refreshTrigger?: number;
 }
 
 const XPDisplay: React.FC<XPDisplayProps> = ({ refreshTrigger }) => {
+  const { user } = useAuth();
   const [xp, setXp] = useState(0);
   const [level, setLevel] = useState(0);
 
   useEffect(() => {
+    if (!user?.user_id) return;
     const fetchXP = async () => {
       try {
-        const stats = await api.user.getStats();
+        const stats = await api.user.getStats(user.user_id);
         setXp(stats.total_xp);
         setLevel(stats.level);
-      } catch (err) {
-        console.error("Failed to fetch XP", err);
+      } catch {
+        // Non-critical — keep showing 0
       }
     };
     fetchXP();
-  }, [refreshTrigger]);
+  }, [user?.user_id, refreshTrigger]);
 
   return (
-    <div className="fixed top-8 right-8 z-50 flex items-center gap-4 font-mono text-sm mix-blend-difference">
-       <div className="flex flex-col items-end">
+    <div className="fixed top-8 right-8 z-50 flex items-center gap-4 font-mono text-sm">
+      <div className="flex flex-col items-end">
         <span className="text-gray-400 text-xs tracking-widest uppercase mb-1">Level {level}</span>
-        <div className="h-1 w-24 bg-gray-800 rounded-full overflow-hidden">
-             {/* Simple progress bar mock based on XP % 100 */}
-            <div 
-                className="h-full bg-yggen-teal" 
-                style={{ width: `${xp % 100}%` }} 
-            />
+        <div className="h-1 w-24 bg-gray-100 rounded-full overflow-hidden">
+          <div
+            className="h-full bg-yggen-teal transition-all duration-500"
+            style={{ width: `${xp % 100}%` }}
+          />
         </div>
       </div>
-      
+
       <div className="flex flex-col items-end">
-        <span className="text-gray-400 text-xs tracking-widest uppercase mb-1">Current XP</span>
-        <span className="text-yggen-teal font-bold text-xl tracking-tighter glow-text">
+        <span className="text-gray-400 text-xs tracking-widest uppercase mb-1">XP</span>
+        <span className="text-black font-bold text-xl tracking-tighter">
           {xp.toLocaleString()}
         </span>
       </div>
-      
-      <div className="w-10 h-10 border border-gray-800 rounded-full flex items-center justify-center bg-black/50 backdrop-blur-sm">
-        <div className="w-2 h-2 bg-yggen-teal rounded-full animate-pulse glow-box" />
+
+      <div className="w-8 h-8 border border-gray-200 rounded-full flex items-center justify-center">
+        <div className="w-1.5 h-1.5 bg-yggen-teal rounded-full animate-pulse" />
       </div>
     </div>
   );

@@ -8,39 +8,40 @@ class ExpeditionService:
     def __init__(self):
         self.db = db
 
-    async def create_expedition(self, user_id: str, root_topic: str) -> dict:
+    def create_expedition(self, user_id: str, root_topic: str) -> dict:
         """
-        Creates a new expedition and initializes the AI-generated graph.
+        Creates a new expedition by fetching the Wikipedia graph structure.
+        No longer async — the Wikipedia API client is synchronous.
         """
         from app.services.graph_generator import graph_generator
 
-        # 1. Generate Graph using AI
-        # This might take a few seconds, so we do it first or async
+        # 0. Ensure user exists (auto-create if first expedition)
+        self.ensure_user_exists(user_id)
+
+        # 1. Build Graph from Wikipedia
         try:
-            graph_data = await graph_generator.generate_initial_graph(root_topic)
+            graph_data = graph_generator.generate_initial_graph(root_topic)
         except Exception as e:
-            # Fallback for dev/demo if AI fails or no key (schema mock)
-             graph_data = {
-                "root": {
-                    "topic": root_topic,
-                    "level": 0,
-                    "primary_domain": "General",
-                    "secondary_domains": [],
-                    "difficulty_score": 10,
-                    "abstraction_score": 10
-                },
-                "prerequisites": [],
-                "advanced": [],
-                "cross_links": []
-            }
+            raise ValueError(f"Failed to build Wikipedia graph: {str(e)}")
+
+        # 1b. Detect domain from root page Wikipedia categories
+        from app.services.wikipedia_service import wikipedia_service
+        detected_domain = "General"
+        try:
+            root_page = wikipedia_service.get_page(graph_data['root']['topic'])
+            if root_page and root_page.get('categories'):
+                detected_domain = wikipedia_service.get_primary_domain(root_page['categories'])
+        except Exception:
+            pass  # Non-critical — fall back to "General"
 
         # 2. Create Expedition Record
         expedition = Expedition(
             user_id=user_id,
-            root_topic=graph_data['root']['topic']
+            root_topic=graph_data['root']['topic'],
+            domain=detected_domain
         )
-        exp_meta = self.store_expedition(expedition)
-        
+        self.store_expedition(expedition)
+
         # 3. Create Root Node
         root_data = graph_data['root']
         root_node = Node(
@@ -50,59 +51,93 @@ class ExpeditionService:
             primary_domain=root_data['primary_domain'],
             difficulty_score=root_data['difficulty_score'],
             abstraction_score=root_data['abstraction_score'],
+            wikipedia_url=root_data.get('wikipedia_url'),
+            summary=root_data.get('summary'),
+            link_type=None,
             parent_node_id=None
         )
-        root_meta = self.store_node(root_node)
-        
-        # 4. Process Prerequisites (Level -1)
-        prereqs = []
-        for p_data in graph_data.get('prerequisites', []):
-            node = Node(
-                expedition_id=expedition.expedition_id,
-                topic=p_data['topic'],
-                level=p_data['level'],
-                primary_domain=p_data['primary_domain'],
-                difficulty_score=p_data['difficulty_score'],
-                abstraction_score=p_data['abstraction_score'],
-                parent_node_id=root_node.node_id # Technically root is parent in terms of traversal, or vice-versa?
-                # For prerequisites, the relationship is Prerequisite -> Root. 
-                # In a tree, Root is usually top. But this is a graph. 
-                # Let's link them loosely or use edge collection.
-            )
-            self.store_node(node)
-            self.create_edge(node.node_id, root_node.node_id, "prerequisite_of")
-            prereqs.append(node)
+        self.store_node(root_node)
 
-        # 5. Process Advanced (Level +1)
+        # 4. Process Embedded Link Nodes (Level +1)
         advanced = []
-        for a_data in graph_data.get('advanced', []):
+        for n_data in graph_data.get('advanced', []):
             node = Node(
                 expedition_id=expedition.expedition_id,
-                topic=a_data['topic'],
-                level=a_data['level'],
-                primary_domain=a_data['primary_domain'],
-                difficulty_score=a_data['difficulty_score'],
-                abstraction_score=a_data['abstraction_score'],
+                topic=n_data['topic'],
+                level=n_data['level'],
+                primary_domain=n_data['primary_domain'],
+                difficulty_score=n_data.get('difficulty_score', 50),
+                abstraction_score=n_data.get('abstraction_score', 50),
+                link_type=n_data.get('link_type', 'embedded_link'),
                 parent_node_id=root_node.node_id
             )
             self.store_node(node)
-            self.create_edge(root_node.node_id, node.node_id, "advanced_of")
+            self.create_edge(root_node.node_id, node.node_id, "embedded_link")
             advanced.append(node)
-        
+
+        # 5. Process See Also Nodes (cross-links)
+        cross_links = []
+        for n_data in graph_data.get('cross_links', []):
+            node = Node(
+                expedition_id=expedition.expedition_id,
+                topic=n_data['topic'],
+                level=n_data['level'],
+                primary_domain=n_data['primary_domain'],
+                difficulty_score=n_data.get('difficulty_score', 50),
+                abstraction_score=n_data.get('abstraction_score', 50),
+                link_type='see_also_link',
+                parent_node_id=root_node.node_id
+            )
+            self.store_node(node)
+            self.create_edge(root_node.node_id, node.node_id, "see_also_link")
+            cross_links.append(node)
+
         return {
             "expedition_id": expedition.expedition_id,
-            "root_node": root_node,
-            "prerequisites": prereqs,
-            "advanced": advanced
+            "root_node": root_node.dict(),
+            "linked_pages": [n.dict() for n in advanced],
+            "see_also": [n.dict() for n in cross_links]
         }
 
+    def _serialize_doc(self, doc: dict) -> dict:
+        """
+        Recursively convert datetime objects to ISO 8601 strings so ArangoDB
+        can serialize them to JSON. This is needed because the python-arango
+        driver does not auto-convert datetime objects.
+        """
+        from datetime import datetime
+        return {
+            k: v.isoformat() if isinstance(v, datetime) else v
+            for k, v in doc.items()
+        }
+
+    def ensure_user_exists(self, user_id: str):
+        """
+        Auto-creates a user document if one doesn't exist yet.
+        This is our lightweight 'auth' until a proper login system is added.
+        Data is always tied to a user_id.
+        """
+        try:
+            existing = self.db.db.collection('users').get(user_id)
+            if not existing:
+                from datetime import datetime
+                self.db.db.collection('users').insert({
+                    '_key': user_id,
+                    'user_id': user_id,
+                    'total_xp': 0,
+                    'level': 0,
+                    'created_at': datetime.utcnow().isoformat()
+                })
+        except Exception:
+            pass  # Already exists or non-critical
+
     def store_expedition(self, expedition: Expedition):
-        doc = expedition.dict()
+        doc = self._serialize_doc(expedition.dict())
         doc['_key'] = expedition.expedition_id
         return self.db.db.collection('expeditions').insert(doc, overwrite=True)
 
     def store_node(self, node: Node):
-        doc = node.dict()
+        doc = self._serialize_doc(node.dict())
         doc['_key'] = node.node_id
         return self.db.db.collection('nodes').insert(doc, overwrite=True)
 

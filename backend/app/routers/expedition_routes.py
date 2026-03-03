@@ -1,4 +1,6 @@
 from fastapi import APIRouter, HTTPException, Depends, Body
+from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
+from typing import Optional
 from app.models.expedition_models import ExpeditionCreate, Expedition
 from app.models.node_models import Node
 from app.services.expedition_service import expedition_service
@@ -9,16 +11,206 @@ from app.services.xp_engine import xp_engine
 from app.database.connection import db
 
 router = APIRouter()
+_bearer = HTTPBearer(auto_error=False)
 
-@router.post("/create", response_model=dict)
-async def create_expedition(expedition_data: ExpeditionCreate):
+def get_optional_user(credentials: HTTPAuthorizationCredentials = Depends(_bearer)) -> Optional[str]:
+    """Returns user_id from JWT if present, else None (fail-open for now)."""
+    if not credentials:
+        return None
+    try:
+        from app.services.auth_service import auth_service
+        payload = auth_service.decode_token(credentials.credentials)
+        return payload.get("sub") if payload else None
+    except Exception:
+        return None
+
+@router.get("/{expedition_id}/graph", response_model=dict)
+async def get_expedition_graph(expedition_id: str):
     """
-    Initiates a new expedition.
-    Creates the expedition record and the root node (Level 0).
+    Returns all nodes and edges for a given expedition.
+    Used by MapMode (Galaxy View) to render the full knowledge graph.
     """
     try:
-        result = await expedition_service.create_expedition(
-            user_id=expedition_data.user_id,
+        # Fetch expedition meta
+        exp_doc = db.db.collection('expeditions').get(expedition_id)
+        if not exp_doc:
+            raise HTTPException(status_code=404, detail="Expedition not found")
+
+        # Fetch all nodes for this expedition
+        aql = """
+            FOR n IN nodes
+                FILTER n.expedition_id == @exp_id
+                RETURN n
+        """
+        cursor = db.db.aql.execute(aql, bind_vars={"exp_id": expedition_id})
+        nodes = list(cursor)
+
+        # Fetch all edges for this expedition (join via nodes)
+        node_ids = [f"nodes/{n['_key']}" for n in nodes]
+        edge_aql = """
+            FOR e IN edges
+                FILTER e._from IN @node_ids OR e._to IN @node_ids
+                RETURN e
+        """
+        edge_cursor = db.db.aql.execute(edge_aql, bind_vars={"node_ids": node_ids})
+        raw_edges = list(edge_cursor)
+
+        # Format response
+        formatted_nodes = [{
+            "node_id": n["_key"],
+            "topic": n.get("topic", ""),
+            "level": n.get("level", 0),
+            "link_type": n.get("link_type"),
+            "node_type": n.get("node_type", "standard"),
+            "wikipedia_url": n.get("wikipedia_url")
+        } for n in nodes]
+
+        formatted_edges = [{
+            "from_node_id": e["_from"].replace("nodes/", ""),
+            "to_node_id": e["_to"].replace("nodes/", ""),
+            "type": e.get("type", "embedded_link")
+        } for e in raw_edges]
+
+        return {
+            "expedition_id": expedition_id,
+            "root_topic": exp_doc.get("root_topic", ""),
+            "nodes": formatted_nodes,
+            "edges": formatted_edges
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@router.post("/node/{node_id}/check-drift", response_model=dict)
+async def check_drift(node_id: str, payload: dict = Body(...)):
+    """
+    Checks whether navigating to a candidate Wikipedia link would be a drift
+    from the current expedition context.
+    Payload: { "candidate_topic": "...", "expedition_id": "..." }
+    """
+    from app.services.drift_detector import drift_detector
+
+    candidate_topic = payload.get("candidate_topic", "")
+    expedition_id = payload.get("expedition_id", "")
+
+    if not candidate_topic or not expedition_id:
+        raise HTTPException(status_code=400, detail="Missing candidate_topic or expedition_id")
+
+    try:
+        # Fetch node topic and expedition root
+        node_doc = db.db.collection('nodes').get(node_id)
+        if not node_doc:
+            raise HTTPException(status_code=404, detail="Node not found")
+
+        exp_doc = db.db.collection('expeditions').get(expedition_id)
+        if not exp_doc:
+            raise HTTPException(status_code=404, detail="Expedition not found")
+
+        # Fetch recently visited topics for context
+        aql = "FOR n IN nodes FILTER n.expedition_id == @id SORT n.created_at DESC LIMIT 6 RETURN n.topic"
+        cursor = db.db.aql.execute(aql, bind_vars={"id": expedition_id})
+        context_topics = list(cursor)
+
+        result = await drift_detector.score_relevance(
+            expedition_root_topic=exp_doc.get("root_topic", ""),
+            current_topic=node_doc.get("topic", ""),
+            candidate_link=candidate_topic,
+            context_topics=context_topics
+        )
+        return result
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.post("/{expedition_id}/fork", response_model=dict)
+async def fork_expedition(expedition_id: str, payload: dict = Body(...)):
+    """
+    Forks from a drift node into a brand new, independent expedition.
+    Like opening a new project from a bookmarked page.
+    Payload: { "user_id": "...", "root_topic": "..." }
+    """
+    user_id = payload.get("user_id")
+    root_topic = payload.get("root_topic")
+
+    if not user_id or not root_topic:
+        raise HTTPException(status_code=400, detail="Missing user_id or root_topic")
+
+    try:
+        result = expedition_service.create_expedition(
+            user_id=user_id,
+            root_topic=root_topic
+        )
+        return {"forked_from": expedition_id, **result}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/node/{node_id}/summary", response_model=dict)
+async def get_node_summary(node_id: str):
+    """
+    Generates an AI summary and key points for a Wikipedia article node.
+    Uses AIEngine (Groq for speed). Results are NOT cached — called on demand.
+    """
+    from app.services.ai_engine import ai_engine
+
+    try:
+        node_doc = db.db.collection('nodes').get(node_id)
+        if not node_doc:
+            raise HTTPException(status_code=404, detail="Node not found")
+
+        topic = node_doc.get("topic", "Unknown")
+        # Use the cached Wikipedia summary text if available, else short stub
+        wiki_text = node_doc.get("summary") or node_doc.get("content", "")[:800]
+
+        provider_name, model_name = "groq", None  # Groq for speed
+        from app.services.providers.groq_provider import GroqProvider
+        groq_provider = GroqProvider()
+
+        system_prompt = """You are an expert educator distilling Wikipedia articles for curious students.
+Given article text, produce a JSON response with:
+- "summary": 2-3 sentence plain-language overview (max 60 words)
+- "key_points": list of 3-5 bullet points (1 sentence each, no jargon)
+
+Output JSON only, no extra text."""
+
+        user_prompt = f"Article: {topic}\n\nText: {wiki_text}\n\nSummarize for a curious student."
+
+        result = await groq_provider.generate_json(
+            model=model_name,
+            system_prompt=system_prompt,
+            user_prompt=user_prompt
+        )
+
+        return {
+            "node_id": node_id,
+            "topic": topic,
+            "summary": result.get("summary", ""),
+            "key_points": result.get("key_points", [])
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.post("/create", response_model=dict)
+async def create_expedition(
+    expedition_data: ExpeditionCreate,
+    auth_user_id: Optional[str] = Depends(get_optional_user)
+):
+    """
+    Initiates a new expedition by searching and mapping a Wikipedia article.
+    If a valid JWT is provided, the JWT user_id overrides the body payload.
+    """
+    if not auth_user_id and not expedition_data.user_id:
+        raise HTTPException(status_code=401, detail="Authentication required")
+    user_id = auth_user_id or expedition_data.user_id
+    try:
+        result = expedition_service.create_expedition(
+            user_id=user_id,
             root_topic=expedition_data.root_topic
         )
         return result
@@ -27,55 +219,101 @@ async def create_expedition(expedition_data: ExpeditionCreate):
 
 @router.get("/user/{user_id}", response_model=dict)
 async def get_user_stats(user_id: str):
-    """
-    Fetches user stats (XP, Level).
-    """
+    """Fetches user stats (XP, Level)."""
     try:
-        # Fetch user doc. If not found, return defaults.
         user_doc = db.db.collection('users').get(user_id)
         if not user_doc:
             return {"user_id": user_id, "total_xp": 0, "level": 0}
-        
         return {
             "user_id": user_doc.get('_key'),
             "total_xp": user_doc.get('total_xp', 0),
             "level": user_doc.get('level', 0)
         }
-    except Exception as e:
-        # Return default if error, or bubble up
-        # For robustness, return safe default
+    except Exception:
         return {"user_id": user_id, "total_xp": 0, "level": 0}
+
+@router.get("/user/{user_id}/expeditions", response_model=dict)
+async def get_user_expeditions(user_id: str):
+    """
+    Returns all expeditions for a user, grouped by domain.
+    Powers the Knowledge Library (Letterboxd-style) page.
+    """
+    try:
+        aql = """
+            FOR e IN expeditions
+                FILTER e.user_id == @user_id
+                SORT e.created_at DESC
+                RETURN e
+        """
+        cursor = db.db.aql.execute(aql, bind_vars={"user_id": user_id})
+        expeditions = list(cursor)
+
+        # Group by domain
+        grouped: dict = {}
+        total_xp = 0
+        total_nodes = 0
+
+        for exp in expeditions:
+            domain = exp.get("domain", "General")
+            total_xp += exp.get("global_xp_earned", 0)
+            total_nodes += exp.get("nodes_visited", 0)
+
+            card = {
+                "expedition_id": exp.get("_key"),
+                "root_topic": exp.get("root_topic", ""),
+                "domain": domain,
+                "nodes_visited": exp.get("nodes_visited", 0),
+                "xp_earned": exp.get("global_xp_earned", 0),
+                "state": exp.get("state", "active"),
+                "created_at": str(exp.get("created_at", ""))
+            }
+            grouped.setdefault(domain, []).append(card)
+
+        return {
+            "user_id": user_id,
+            "total_expeditions": len(expeditions),
+            "total_nodes_visited": total_nodes,
+            "total_xp": total_xp,
+            "grouped_by_domain": grouped
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
 
 @router.get("/node/{node_id}", response_model=dict)
 async def get_node_content(node_id: str):
     """
-    Fetches node data.
-    Lazy-loads AI content if missing.
+    Fetches node data. Lazy-loads full Wikipedia article text if not cached.
+    Also returns an AI-generated summary via the AIEngine.
     """
+    from app.services.wikipedia_service import wikipedia_service
+    from app.services.ai_engine import ai_engine
+
     try:
         node_doc = db.db.collection('nodes').get(node_id)
         if not node_doc:
             raise HTTPException(status_code=404, detail="Node not found")
         
         node = Node(**node_doc)
-        
-        if not node.content:
-            try:
-                content_data = await content_generator.generate_node_content(
-                    topic=node.topic,
-                    difficulty_score=node.difficulty_score,
-                    abstraction_score=node.abstraction_score
-                )
-                
-                node.content = content_data['content']
-                node.sources = content_data['sources']
-                
-                node_doc['content'] = node.content
-                node_doc['sources'] = node.sources
-                db.db.collection('nodes').update(node_doc)
-                
-            except Exception as e:
-                raise HTTPException(status_code=503, detail=f"Content generation failed: {str(e)}")
+
+        # Lazy-load Wikipedia full article text if not already cached
+        if not node.content and node.topic:
+            page_data = wikipedia_service.get_page(node.topic)
+            if page_data:
+                node.content = page_data.get("full_text", "")
+                node.sources = [page_data.get("url", "")]
+                if not node.wikipedia_url:
+                    node.wikipedia_url = page_data.get("url")
+                if not node.summary:
+                    node.summary = page_data.get("summary", "")[:500]
+
+                # Update DB with fetched content
+                update_data = {
+                    "content": node.content,
+                    "sources": node.sources,
+                    "wikipedia_url": node.wikipedia_url,
+                    "summary": node.summary
+                }
+                db.db.collection('nodes').update({**node_doc, **update_data})
 
         return node.dict()
 
@@ -85,14 +323,19 @@ async def get_node_content(node_id: str):
         raise HTTPException(status_code=500, detail=str(e))
 
 @router.post("/node/{node_id}/continue", response_model=dict)
-async def continue_expedition(node_id: str, payload: dict):
+async def continue_expedition(
+    node_id: str,
+    payload: dict,
+    auth_user_id: Optional[str] = Depends(get_optional_user)
+):
     """
     Determines next node logic and awards XP.
-    Payload: {"expedition_id": "...", "current_node_id": "...", "user_id": "..."}
+    Payload: {"expedition_id": "...", "user_id": "..."}
+    JWT user_id takes precedence over payload user_id.
     """
     expedition_id = payload.get("expedition_id")
-    user_id = payload.get("user_id") # Add current_node_id if distinct from path param
-    
+    user_id = auth_user_id or payload.get("user_id")
+
     if not expedition_id or not user_id:
         raise HTTPException(status_code=400, detail="Missing expedition_id or user_id")
 
