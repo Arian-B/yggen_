@@ -32,3 +32,6 @@ venv/
 .pytest_cache/
 input.json
 test.json
+
+# Local dev notes (keep off git)
+COMMANDS.txt

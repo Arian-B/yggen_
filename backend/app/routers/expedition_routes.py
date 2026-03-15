@@ -196,6 +196,52 @@ Output JSON only, no extra text."""
         raise HTTPException(status_code=500, detail=str(e))
 
 
+@router.get("/search", response_model=dict)
+async def search_wikipedia(q: str = ""):
+    """
+    Live Wikipedia search — returns matching article titles and summaries.
+    Powers the search dropdown on the LandingPage.
+    """
+    if not q or len(q.strip()) < 2:
+        return {"results": []}
+    try:
+        from app.services.wikipedia_service import wikipedia_service
+        import httpx
+        # Use Wikipedia's opensearch API for fast, real-time suggestions
+        async with httpx.AsyncClient(timeout=5.0) as client:
+            resp = await client.get(
+                "https://en.wikipedia.org/w/api.php",
+                headers={
+                    "User-Agent": "wikiyggen_/1.0 (https://github.com/Arian-B/yggen_; contact@wikiyggen.dev) httpx/0.27",
+                    "Accept": "application/json"
+                },
+                params={
+                    "action": "opensearch",
+                    "search": q.strip(),
+                    "limit": 8,
+                    "namespace": 0,
+                    "format": "json",
+                    "redirects": "resolve"
+                }
+            )
+            data = resp.json()
+        # opensearch returns [query, [titles], [descriptions], [urls]]
+        titles       = data[1] if len(data) > 1 else []
+        descriptions = data[2] if len(data) > 2 else []
+        urls         = data[3] if len(data) > 3 else []
+        results = [
+            {
+                "title":       titles[i],
+                "description": descriptions[i] if i < len(descriptions) else "",
+                "url":         urls[i]         if i < len(urls)         else ""
+            }
+            for i in range(len(titles))
+        ]
+        return {"results": results, "query": q}
+    except Exception as e:
+        return {"results": [], "error": str(e)}
+
+
 @router.post("/create", response_model=dict)
 async def create_expedition(
     expedition_data: ExpeditionCreate,
@@ -216,6 +262,7 @@ async def create_expedition(
         return result
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
 
 @router.get("/user/{user_id}", response_model=dict)
 async def get_user_stats(user_id: str):
@@ -254,27 +301,43 @@ async def get_user_expeditions(user_id: str):
         total_nodes = 0
 
         for exp in expeditions:
-            domain = exp.get("domain", "General")
+            # Use real Wikipedia category; fall back to domain for old records
+            category = exp.get("category") or exp.get("domain", "General")
             total_xp += exp.get("global_xp_earned", 0)
             total_nodes += exp.get("nodes_visited", 0)
 
             card = {
                 "expedition_id": exp.get("_key"),
                 "root_topic": exp.get("root_topic", ""),
-                "domain": domain,
+                "domain": category,
+                "category": category,
                 "nodes_visited": exp.get("nodes_visited", 0),
                 "xp_earned": exp.get("global_xp_earned", 0),
                 "state": exp.get("state", "active"),
-                "created_at": str(exp.get("created_at", ""))
+                "created_at": str(exp.get("created_at", "")),
+                "root_node_id": None  # filled below
             }
-            grouped.setdefault(domain, []).append(card)
+
+            # Look up root node (level 0) for this expedition
+            try:
+                root_cursor = db.db.aql.execute(
+                    "FOR n IN nodes FILTER n.expedition_id == @eid AND n.level == 0 LIMIT 1 RETURN n._key",
+                    bind_vars={"eid": exp.get("_key")}
+                )
+                root_key = next(root_cursor, None)
+                card["root_node_id"] = root_key
+            except Exception:
+                pass
+
+            grouped.setdefault(category, []).append(card)
 
         return {
             "user_id": user_id,
             "total_expeditions": len(expeditions),
             "total_nodes_visited": total_nodes,
             "total_xp": total_xp,
-            "grouped_by_domain": grouped
+            "grouped_by_domain": grouped,
+            "categories": sorted(grouped.keys())   # ordered list of distinct categories
         }
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))

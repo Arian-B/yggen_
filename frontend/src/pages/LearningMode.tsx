@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { motion, AnimatePresence } from 'framer-motion';
 import { Map, Sparkles, ExternalLink, ChevronDown, ChevronUp } from 'lucide-react';
@@ -30,6 +30,168 @@ const INITIAL_DRIFT: DriftState = {
   checking: false
 };
 
+// ── Wikipedia HTML renderer ───────────────────────────────────────────────────
+// Uses Wikipedia's full Parsoid HTML endpoint — same content as the desktop
+// Wikipedia page, with all images, infoboxes, equations, and references.
+
+const WikipediaArticle = ({
+  topic,
+  linkedNodes,
+  onLinkClick,
+}: {
+  topic: string;
+  linkedNodes: WikiLink[];
+  onLinkClick: (nodeId: string, topic: string) => void;
+}) => {
+  const [html, setHtml] = useState('');
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState('');
+  const containerRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!topic) return;
+    setLoading(true);
+    setHtml('');
+    setError('');
+
+    const slug = encodeURIComponent(topic.trim().replace(/ /g, '_'));
+    const ua = 'wikiyggen_/1.0 (https://github.com/Arian-B/yggen_)';
+
+    // Primary: full Parsoid HTML (complete article, all sections)
+    fetch(`https://en.wikipedia.org/api/rest_v1/page/html/${slug}`, {
+      headers: { 'Api-User-Agent': ua }
+    })
+      .then(r => {
+        if (!r.ok) throw new Error(`status ${r.status}`);
+        return r.text();   // returns full HTML document
+      })
+      .then(fullDoc => {
+        // Extract just the <body> content
+        const parser = new DOMParser();
+        const doc = parser.parseFromString(fullDoc, 'text/html');
+        const body = doc.body;
+
+        // Remove edit-section links, hidden elements, footer navboxes (too noisy)
+        body.querySelectorAll('.mw-editsection, .noprint, .navbox, .sistersitebox, #toc').forEach(el => el.remove());
+
+        // Fix protocol-relative src on images and media
+        body.querySelectorAll('img[src], img[data-src]').forEach(el => {
+          const img = el as HTMLImageElement;
+          const src = img.getAttribute('src') || img.getAttribute('data-src') || '';
+          if (src.startsWith('//')) img.src = 'https:' + src;
+          else if (src.startsWith('./')) img.src = `https://en.wikipedia.org/wiki/${src.slice(2)}`;
+          img.style.maxWidth = '100%';
+          img.style.height = 'auto';
+        });
+
+        setHtml(body.innerHTML);
+      })
+      .catch(() => {
+        // Fallback 1: mobile-sections (structured JSON)
+        fetch(`https://en.wikipedia.org/api/rest_v1/page/mobile-sections/${slug}`, {
+          headers: { 'Api-User-Agent': ua }
+        })
+          .then(r => r.ok ? r.json() : Promise.reject())
+          .then(data => {
+            const lead = data.lead?.sections?.[0]?.text || '';
+            const rest = (data.remaining?.sections || [])
+              .map((s: any) => `<h2>${s.line || ''}</h2>${s.text || ''}`)
+              .join('');
+            setHtml(lead + rest);
+          })
+          .catch(() => {
+            // Fallback 2: plain summary
+            fetch(`https://en.wikipedia.org/api/rest_v1/page/summary/${slug}`)
+              .then(r => r.json())
+              .then(d => setHtml(`<p>${d.extract_html || d.extract || 'No content available.'}</p>`))
+              .catch(() => setError('Could not load Wikipedia content.'));
+          });
+      })
+      .finally(() => setLoading(false));
+  }, [topic]);
+
+  // Wire up internal wiki links → expedition node navigation
+  useEffect(() => {
+    if (!html || !containerRef.current) return;
+    const container = containerRef.current;
+
+    container.querySelectorAll('a[href]').forEach(el => {
+      const a = el as HTMLAnchorElement;
+      const href = a.getAttribute('href') || '';
+      const wikiMatch = href.match(/^(?:\.\/|\/wiki\/)([^#?:]+)/);
+      if (!wikiMatch) { a.target = '_blank'; a.rel = 'noopener noreferrer'; return; }
+
+      const wikiTitle = decodeURIComponent(wikiMatch[1].replace(/_/g, ' '));
+      const linkedNode = linkedNodes.find(
+        n => n.topic.toLowerCase() === wikiTitle.toLowerCase()
+      );
+
+      if (linkedNode) {
+        a.style.color = '#00ADB5';
+        a.style.fontWeight = '500';
+        a.onclick = e => { e.preventDefault(); onLinkClick(linkedNode.nodeId, linkedNode.topic); };
+      } else {
+        const abs = href.startsWith('//') ? 'https:' + href
+          : href.startsWith('./') ? `https://en.wikipedia.org/wiki/${href.slice(2)}`
+          : href.startsWith('/') ? `https://en.wikipedia.org${href}`
+          : href;
+        a.href = abs;
+        a.target = '_blank';
+        a.rel = 'noopener noreferrer';
+      }
+    });
+  }, [html, linkedNodes, onLinkClick]);
+
+  if (loading) return (
+    <div className="text-yggen-teal text-xs animate-pulse tracking-widest uppercase py-8">
+      Loading Wikipedia article...
+    </div>
+  );
+  if (error) return <p className="text-red-400 text-sm">{error}</p>;
+
+  return (
+    <>
+      <style>{`
+        .wiki-article { font-family: 'Linux Libertine', Georgia, serif; color: #1a1a1a; font-size: 1rem; line-height: 1.75; }
+        .wiki-article p { margin-bottom: 1em; }
+        .wiki-article h1 { display: none; }
+        .wiki-article h2 { font-size: 1.35rem; font-weight: 700; margin: 2em 0 0.5em; padding-bottom: 4px; border-bottom: 1px solid #e5e7eb; }
+        .wiki-article h3 { font-size: 1.1rem; font-weight: 600; margin: 1.5em 0 0.4em; }
+        .wiki-article h4 { font-size: 0.95rem; font-weight: 600; margin: 1.2em 0 0.3em; }
+        .wiki-article figure { margin: 1.5em 0; }
+        .wiki-article figure img { max-width: 100%; height: auto; border-radius: 6px; border: 1px solid #e5e7eb; display: block; }
+        .wiki-article figcaption { font-size: 0.78rem; color: #6b7280; margin-top: 6px; }
+        .wiki-article table { border-collapse: collapse; margin: 1.5em 0; font-size: 0.88rem; width: auto; max-width: 100%; }
+        .wiki-article table th { background: #f9fafb; padding: 6px 10px; text-align: left; border: 1px solid #e5e7eb; font-weight: 600; }
+        .wiki-article table td { padding: 6px 10px; border: 1px solid #e5e7eb; vertical-align: top; }
+        .wiki-article .infobox, .wiki-article .infobox_v3 { float: right; clear: right; margin: 0 0 1.5em 1.5em; max-width: 300px; min-width: 200px; font-size: 0.82rem; border: 1px solid #e5e7eb; background: #f9fafb; }
+        .wiki-article .infobox th, .wiki-article .infobox td { padding: 4px 8px; font-size: 0.8rem; border: 1px solid #e5e7eb; }
+        .wiki-article .infobox caption { font-weight: 700; padding: 6px; background: #222; color: white; text-align: center; font-size: 0.85rem; }
+        .wiki-article ul, .wiki-article ol { padding-left: 1.5em; margin-bottom: 1em; }
+        .wiki-article li { margin-bottom: 0.3em; }
+        .wiki-article .mwe-math-element { display: inline-block; overflow-x: auto; vertical-align: middle; }
+        .wiki-article .mwe-math-element img { border: none !important; display: inline; }
+        .wiki-article .hatnote { font-style: italic; color: #6b7280; border-left: 3px solid #00ADB5; padding-left: 10px; margin-bottom: 1em; font-size: 0.9rem; }
+        .wiki-article sup { font-size: 0.7em; }
+        .wiki-article sup a { color: #9ca3af; }
+        .wiki-article .reflist, .wiki-article ol.references { font-size: 0.8rem; color: #6b7280; }
+        .wiki-article .thumb { border: 1px solid #e5e7eb; padding: 4px; margin: 0 0 1em 1em; float: right; clear: right; max-width: 250px; background: #fafafa; font-size: 0.78rem; }
+        .wiki-article .thumbcaption { font-size: 0.75rem; color: #6b7280; padding-top: 4px; }
+        @media (max-width: 640px) {
+          .wiki-article .infobox, .wiki-article .thumb { float: none; max-width: 100%; margin: 0 0 1em 0; }
+        }
+      `}</style>
+      <div
+        ref={containerRef}
+        className="wiki-article"
+        dangerouslySetInnerHTML={{ __html: html }}
+      />
+    </>
+  );
+};
+
+// ── Main LearningMode ──────────────────────────────────────────────────────────
+
 const LearningMode = () => {
   const { id: nodeId } = useParams();
   const navigate = useNavigate();
@@ -50,7 +212,7 @@ const LearningMode = () => {
   // Drift state
   const [drift, setDrift] = useState<DriftState>(INITIAL_DRIFT);
 
-  // Drift summary peek (View Summary Only)
+  // Drift summary peek
   const [driftSummary, setDriftSummary] = useState('');
   const [driftSummaryLoading, setDriftSummaryLoading] = useState(false);
 
@@ -73,6 +235,14 @@ const LearningMode = () => {
         const data = await api.node.get(nodeId);
         setContent(data);
 
+        // Write expedition context so VerticalNavbar can build the Map link
+        if (data.expedition_id) {
+          localStorage.setItem('wikiyggen_current_expedition', JSON.stringify({
+            node_id: nodeId,
+            expedition_id: data.expedition_id
+          }));
+        }
+
         if (data.expedition_id) {
           try {
             const graph = await api.expedition.getGraph(data.expedition_id);
@@ -89,6 +259,12 @@ const LearningMode = () => {
       }
     };
     fetchNode();
+
+    // Clear expedition context on unmount
+    return () => {
+      // Only clear if we're leaving the /learn route entirely
+      // (handled by next useEffect run, so no-op here is fine)
+    };
   }, [nodeId]);
 
   const handleLoadSummary = async () => {
@@ -106,36 +282,18 @@ const LearningMode = () => {
     }
   };
 
-  /**
-   * Called when user clicks a linked node chip or an inline hyperlink.
-   * First runs a drift check — if drift is detected, shows DriftModal.
-   * If clean, navigates directly.
-   */
   const handleLinkClick = async (linkedNodeId: string, topic: string) => {
     if (!content || !nodeId) return;
-
-    // Optimistic: set checking state
     setDrift({ ...INITIAL_DRIFT, checking: true, candidateTopic: topic, candidateNodeId: linkedNodeId, open: false });
-
     try {
       const result = await api.node.checkDrift(nodeId, topic, content.expedition_id);
-
       if (result.is_drift) {
-        setDrift({
-          open: true,
-          candidateTopic: topic,
-          candidateNodeId: linkedNodeId,
-          reason: result.reason,
-          score: result.score,
-          checking: false
-        });
+        setDrift({ open: true, candidateTopic: topic, candidateNodeId: linkedNodeId, reason: result.reason, score: result.score, checking: false });
       } else {
-        // Clean link — navigate directly
         setDrift(INITIAL_DRIFT);
         navigate(`/learn/${linkedNodeId}`);
       }
     } catch {
-      // Fail open — if drift check errors just navigate
       setDrift(INITIAL_DRIFT);
       navigate(`/learn/${linkedNodeId}`);
     }
@@ -202,39 +360,6 @@ const LearningMode = () => {
     }
   };
 
-  // Render article text, detecting and highlighting linked nodes as interactive spans
-  const renderContent = (text: string) => {
-    if (!text) return null;
-    const paragraphs = text.split('\n').filter(p => p.trim().length > 0);
-
-    return paragraphs.map((para, i) => {
-      let result: (string | React.ReactElement)[] = [para];
-
-      linkedNodes.forEach(({ topic, nodeId: linkedId }) => {
-        result = result.flatMap(part => {
-          if (typeof part !== 'string') return [part];
-          const idx = part.toLowerCase().indexOf(topic.toLowerCase());
-          if (idx === -1) return [part];
-          return [
-            part.slice(0, idx),
-            <button
-              key={`${linkedId}-${i}`}
-              onClick={() => handleLinkClick(linkedId, topic)}
-              title={`Explore: ${topic}`}
-              className="text-yggen-teal underline decoration-dotted underline-offset-2 hover:decoration-solid font-medium transition-colors cursor-pointer"
-            >
-              {part.slice(idx, idx + topic.length)}
-            </button>,
-            part.slice(idx + topic.length)
-          ];
-        });
-      });
-
-      return <p key={i} className="mb-5 leading-relaxed text-gray-800">{result}</p>;
-    });
-  };
-
-  // --- Loading / Error states ---
   if (loading) return (
     <div className="min-h-screen flex items-center justify-center bg-white">
       <div className="text-yggen-teal animate-pulse text-xs tracking-widest uppercase">Loading article...</div>
@@ -250,7 +375,7 @@ const LearningMode = () => {
 
   return (
     <div className="min-h-screen bg-white text-black">
-      <div className="max-w-2xl mx-auto px-6 pt-16 pb-40">
+      <div className="max-w-3xl mx-auto px-6 pt-16 pb-40">
 
         {/* Breadcrumb */}
         <div className="text-xs text-gray-400 tracking-widest uppercase mb-10 flex items-center gap-2">
@@ -260,7 +385,7 @@ const LearningMode = () => {
         </div>
 
         {/* Title */}
-        <h1 className="text-5xl md:text-7xl font-bold tracking-tighter mb-6 text-black">
+        <h1 className="text-5xl md:text-7xl font-bold tracking-tighter mb-4 text-black">
           {content.topic}
         </h1>
 
@@ -289,7 +414,7 @@ const LearningMode = () => {
           )}
         </AnimatePresence>
 
-        {/* Drift summary peek (persists after user clicks View Summary) */}
+        {/* Drift summary peek */}
         <AnimatePresence>
           {driftSummary && (
             <motion.div
@@ -359,9 +484,13 @@ const LearningMode = () => {
           </AnimatePresence>
         </div>
 
-        {/* Article Content */}
-        <article className="text-base font-light">
-          {renderContent(content.content || content.summary || 'No content available for this article yet.')}
+        {/* ── Wikipedia Article with real HTML, images, equations ── */}
+        <article>
+          <WikipediaArticle
+            topic={content.topic}
+            linkedNodes={linkedNodes}
+            onLinkClick={handleLinkClick}
+          />
         </article>
 
         {/* Sources */}
@@ -387,7 +516,7 @@ const LearningMode = () => {
                   key={linkedId}
                   onClick={() => handleLinkClick(linkedId, topic)}
                   disabled={drift.checking}
-                  className="text-xs px-3 py-1.5 border border-gray-200 text-gray-600 hover:border-black hover:text-black transition-all disabled:opacity-40"
+                  className="text-xs px-3 py-1.5 border border-gray-200 text-gray-600 hover:border-yggen-teal hover:text-black transition-all disabled:opacity-40"
                 >
                   {topic}
                 </button>

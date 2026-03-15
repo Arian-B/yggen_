@@ -16,6 +16,7 @@ interface AuthContextType {
   isLoading: boolean;
   login: (token: string, user: AuthUser) => void;
   logout: () => void;
+  updateAvatar: (url: string) => void;
 }
 
 const AuthContext = createContext<AuthContextType>({
@@ -24,7 +25,8 @@ const AuthContext = createContext<AuthContextType>({
   isAuthenticated: false,
   isLoading: true,
   login: () => {},
-  logout: () => {}
+  logout: () => {},
+  updateAvatar: () => {}
 });
 
 const API_BASE = 'http://localhost:8000/api';
@@ -46,6 +48,15 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
     localStorage.removeItem('wikiyggen_user');
     setToken(null);
     setUser(null);
+  }, []);
+
+  const updateAvatar = useCallback((url: string) => {
+    setUser(prev => {
+      if (!prev) return prev;
+      const updated = { ...prev, avatar_url: url };
+      localStorage.setItem('wikiyggen_user', JSON.stringify(updated));
+      return updated;
+    });
   }, []);
 
   // On mount: restore session from localStorage, verify token with /me
@@ -93,7 +104,7 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
   }, [login, logout]);
 
   return (
-    <AuthContext.Provider value={{ user, token, isAuthenticated: !!user, isLoading, login, logout }}>
+    <AuthContext.Provider value={{ user, token, isAuthenticated: !!user, isLoading, login, logout, updateAvatar }}>
       {children}
     </AuthContext.Provider>
   );

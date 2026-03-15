@@ -1,8 +1,12 @@
 from datetime import datetime
+import traceback
+import logging
 from app.database.connection import db
 from app.models.expedition_models import Expedition, ExpeditionCreate
 from app.models.node_models import Node, NodeCreate
 import uuid
+
+logger = logging.getLogger(__name__)
 
 class ExpeditionService:
     def __init__(self):
@@ -11,93 +15,95 @@ class ExpeditionService:
     def create_expedition(self, user_id: str, root_topic: str) -> dict:
         """
         Creates a new expedition by fetching the Wikipedia graph structure.
-        No longer async — the Wikipedia API client is synchronous.
         """
         from app.services.graph_generator import graph_generator
 
-        # 0. Ensure user exists (auto-create if first expedition)
+        # 0. Ensure user record exists
         self.ensure_user_exists(user_id)
 
-        # 1. Build Graph from Wikipedia
+        # 1. Build graph from Wikipedia
         try:
             graph_data = graph_generator.generate_initial_graph(root_topic)
         except Exception as e:
             raise ValueError(f"Failed to build Wikipedia graph: {str(e)}")
 
-        # 1b. Detect domain from root page Wikipedia categories
-        from app.services.wikipedia_service import wikipedia_service
-        detected_domain = "General"
+        # 1b. Use category already detected by graph_generator — no second fetch needed
+        detected_domain = (
+            graph_data['root'].get('category')
+            or graph_data['root'].get('primary_domain')
+            or 'General'
+        )
+
         try:
-            root_page = wikipedia_service.get_page(graph_data['root']['topic'])
-            if root_page and root_page.get('categories'):
-                detected_domain = wikipedia_service.get_primary_domain(root_page['categories'])
-        except Exception:
-            pass  # Non-critical — fall back to "General"
-
-        # 2. Create Expedition Record
-        expedition = Expedition(
-            user_id=user_id,
-            root_topic=graph_data['root']['topic'],
-            domain=detected_domain
-        )
-        self.store_expedition(expedition)
-
-        # 3. Create Root Node
-        root_data = graph_data['root']
-        root_node = Node(
-            expedition_id=expedition.expedition_id,
-            topic=root_data['topic'],
-            level=root_data['level'],
-            primary_domain=root_data['primary_domain'],
-            difficulty_score=root_data['difficulty_score'],
-            abstraction_score=root_data['abstraction_score'],
-            wikipedia_url=root_data.get('wikipedia_url'),
-            summary=root_data.get('summary'),
-            link_type=None,
-            parent_node_id=None
-        )
-        self.store_node(root_node)
-
-        # 4. Process Embedded Link Nodes (Level +1)
-        advanced = []
-        for n_data in graph_data.get('advanced', []):
-            node = Node(
-                expedition_id=expedition.expedition_id,
-                topic=n_data['topic'],
-                level=n_data['level'],
-                primary_domain=n_data['primary_domain'],
-                difficulty_score=n_data.get('difficulty_score', 50),
-                abstraction_score=n_data.get('abstraction_score', 50),
-                link_type=n_data.get('link_type', 'embedded_link'),
-                parent_node_id=root_node.node_id
+            # 2. Create Expedition record
+            expedition = Expedition(
+                user_id=user_id,
+                root_topic=graph_data['root']['topic'],
+                domain=detected_domain
             )
-            self.store_node(node)
-            self.create_edge(root_node.node_id, node.node_id, "embedded_link")
-            advanced.append(node)
+            self.store_expedition(expedition)
 
-        # 5. Process See Also Nodes (cross-links)
-        cross_links = []
-        for n_data in graph_data.get('cross_links', []):
-            node = Node(
+            # 3. Create Root Node
+            root_data = graph_data['root']
+            root_node = Node(
                 expedition_id=expedition.expedition_id,
-                topic=n_data['topic'],
-                level=n_data['level'],
-                primary_domain=n_data['primary_domain'],
-                difficulty_score=n_data.get('difficulty_score', 50),
-                abstraction_score=n_data.get('abstraction_score', 50),
-                link_type='see_also_link',
-                parent_node_id=root_node.node_id
+                topic=root_data['topic'],
+                level=root_data['level'],
+                primary_domain=root_data['primary_domain'],
+                difficulty_score=root_data['difficulty_score'],
+                abstraction_score=root_data['abstraction_score'],
+                wikipedia_url=root_data.get('wikipedia_url'),
+                summary=root_data.get('summary'),
+                link_type=None,
+                parent_node_id=None
             )
-            self.store_node(node)
-            self.create_edge(root_node.node_id, node.node_id, "see_also_link")
-            cross_links.append(node)
+            self.store_node(root_node)
 
-        return {
-            "expedition_id": expedition.expedition_id,
-            "root_node": root_node.dict(),
-            "linked_pages": [n.dict() for n in advanced],
-            "see_also": [n.dict() for n in cross_links]
-        }
+            # 4. Embedded link nodes (Level +1)
+            advanced = []
+            for n_data in graph_data.get('advanced', []):
+                node = Node(
+                    expedition_id=expedition.expedition_id,
+                    topic=n_data['topic'],
+                    level=n_data['level'],
+                    primary_domain=n_data['primary_domain'],
+                    difficulty_score=n_data.get('difficulty_score', 50),
+                    abstraction_score=n_data.get('abstraction_score', 50),
+                    link_type=n_data.get('link_type', 'embedded_link'),
+                    parent_node_id=root_node.node_id
+                )
+                self.store_node(node)
+                self.create_edge(root_node.node_id, node.node_id, "embedded_link")
+                advanced.append(node)
+
+            # 5. See Also nodes (cross-links)
+            cross_links = []
+            for n_data in graph_data.get('cross_links', []):
+                node = Node(
+                    expedition_id=expedition.expedition_id,
+                    topic=n_data['topic'],
+                    level=n_data['level'],
+                    primary_domain=n_data['primary_domain'],
+                    difficulty_score=n_data.get('difficulty_score', 50),
+                    abstraction_score=n_data.get('abstraction_score', 50),
+                    link_type='see_also_link',
+                    parent_node_id=root_node.node_id
+                )
+                self.store_node(node)
+                self.create_edge(root_node.node_id, node.node_id, "see_also_link")
+                cross_links.append(node)
+
+            return {
+                "expedition_id": expedition.expedition_id,
+                "root_node": root_node.dict(),
+                "linked_pages": [n.dict() for n in advanced],
+                "see_also": [n.dict() for n in cross_links]
+            }
+
+        except Exception as e:
+            logger.error(f"create_expedition DB phase FAILED:\n{traceback.format_exc()}")
+            raise
+
 
     def _serialize_doc(self, doc: dict) -> dict:
         """

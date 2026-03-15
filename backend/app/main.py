@@ -1,5 +1,7 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
+import os
 from app.core.config import settings
 from app.database.connection import db
 from app.routers import expedition_routes, auth_routes
@@ -13,6 +15,8 @@ app = FastAPI(
 origins = [
     "http://localhost:5173",
     "http://127.0.0.1:5173",
+    "http://localhost:4173",
+    "http://127.0.0.1:4173",
 ]
 
 app.add_middleware(
@@ -32,6 +36,10 @@ async def startup_event():
 # Include Routers
 app.include_router(auth_routes.router, prefix=f"{settings.API_PREFIX}/auth", tags=["Auth"])
 app.include_router(expedition_routes.router, prefix=f"{settings.API_PREFIX}/expedition", tags=["Expedition"])
+
+# Serve uploaded avatar images
+os.makedirs("static/avatars", exist_ok=True)
+app.mount("/static", StaticFiles(directory="static"), name="static")
 
 @app.get("/")
 async def root():

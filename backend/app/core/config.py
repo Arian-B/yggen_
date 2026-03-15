@@ -34,6 +34,7 @@ class Settings(BaseSettings):
     WIKIPEDIA_REDIRECT_URI: str = "http://localhost:8000/api/auth/wikipedia/callback"
 
     FRONTEND_URL: str = "http://localhost:5173"
+    BACKEND_URL: str = "http://localhost:8000"
 
     # Model Defaults
     DEFAULT_FAST_MODEL: str = "llama-3.3-70b-versatile"  # Groq

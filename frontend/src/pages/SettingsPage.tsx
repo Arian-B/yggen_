@@ -1,9 +1,10 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { motion, AnimatePresence } from 'framer-motion';
-import { CheckCircle, XCircle, ExternalLink, LogOut, User, Mail, Loader2, Trash2 } from 'lucide-react';
+import { CheckCircle, XCircle, ExternalLink, LogOut, User, Mail, Loader2, Trash2, Camera, Sun, Moon, Monitor } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
 import { getAuthHeader } from '../services/api';
+import { useTheme, type Theme } from '../context/ThemeContext';
 
 const API_BASE = 'http://localhost:8000/api';
 
@@ -62,7 +63,8 @@ const PROVIDERS = [
 ];
 
 const SettingsPage = () => {
-  const { user, logout } = useAuth();
+  const { user, logout, updateAvatar } = useAuth();
+  const { theme, setTheme } = useTheme();
   const navigate = useNavigate();
 
   const [accounts, setAccounts] = useState<ConnectedAccounts | null>(null);
@@ -70,6 +72,12 @@ const SettingsPage = () => {
   const [disconnecting, setDisconnecting] = useState<string | null>(null);
   const [successMsg, setSuccessMsg] = useState('');
   const [errorMsg, setErrorMsg] = useState('');
+
+  // Avatar upload state
+  const fileInputRef = useRef<HTMLInputElement>(null);
+  const [previewUrl, setPreviewUrl] = useState<string | null>(null);
+  const [uploadingAvatar, setUploadingAvatar] = useState(false);
+  const [selectedFile, setSelectedFile] = useState<File | null>(null);
 
   // Parse URL params for connection feedback
   useEffect(() => {
@@ -124,9 +132,6 @@ const SettingsPage = () => {
 
   const handleConnect = (provider: typeof PROVIDERS[0]) => {
     if (provider.comingSoon) return;
-    // Wikipedia connect needs JWT in the Authorization header,
-    // but we're doing a browser redirect — so we pass it as a query param
-    // and the backend extracts it from there for this specific endpoint.
     if (provider.key === 'wikipedia') {
       const token = localStorage.getItem('wikiyggen_token');
       window.location.href = `${provider.connectPath}?_token=${token}`;
@@ -137,10 +142,42 @@ const SettingsPage = () => {
 
   const handleLogout = () => { logout(); navigate('/login'); };
 
+  const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    setSelectedFile(file);
+    setPreviewUrl(URL.createObjectURL(file));
+  };
+
+  const handleAvatarUpload = async () => {
+    if (!selectedFile) return;
+    setUploadingAvatar(true);
+    try {
+      const form = new FormData();
+      form.append('file', selectedFile);
+      const res = await fetch(`${API_BASE}/auth/avatar`, {
+        method: 'POST',
+        headers: getAuthHeader(),  // Bearer token only, no Content-Type (browser sets multipart boundary)
+        body: form
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.detail || 'Upload failed');
+      updateAvatar(data.avatar_url);
+      setPreviewUrl(null);
+      setSelectedFile(null);
+      setSuccessMsg('Profile picture updated!');
+    } catch (err: any) {
+      setErrorMsg(err.message || 'Upload failed.');
+    } finally {
+      setUploadingAvatar(false);
+    }
+  };
+
   const avatarLetter = (user?.display_name || user?.email || 'U')[0].toUpperCase();
+  const displayAvatar = previewUrl || user?.avatar_url;
 
   return (
-    <div className="min-h-screen bg-white text-black">
+    <div className="min-h-screen bg-white dark:bg-zinc-950 text-black dark:text-zinc-100 transition-colors duration-200">
       <div className="max-w-xl mx-auto px-6 pt-16 pb-24">
 
         {/* Header */}
@@ -169,26 +206,101 @@ const SettingsPage = () => {
           )}
         </AnimatePresence>
 
+        {/* Appearance — theme picker */}
+        <section className="mb-10 pb-10 border-b border-gray-100 dark:border-zinc-800">
+          <h2 className="text-xs uppercase tracking-widest text-gray-400 dark:text-zinc-500 mb-5">Appearance</h2>
+          <div className="grid grid-cols-3 gap-3">
+            {([
+              { value: 'light',  label: 'Light',  Icon: Sun },
+              { value: 'dark',   label: 'Dark',   Icon: Moon },
+              { value: 'system', label: 'System', Icon: Monitor },
+            ] as { value: Theme; label: string; Icon: any }[]).map(({ value, label, Icon }) => {
+              const active = theme === value;
+              return (
+                <button
+                  key={value}
+                  onClick={() => setTheme(value)}
+                  className={`flex flex-col items-center gap-2 py-4 border text-xs font-medium tracking-wide transition-all
+                    ${ active
+                      ? 'border-yggen-teal text-yggen-teal bg-yggen-dim-teal'
+                      : 'border-gray-200 dark:border-zinc-700 text-gray-500 dark:text-zinc-400 hover:border-gray-400 dark:hover:border-zinc-500'
+                    }`}
+                >
+                  <Icon className="w-4 h-4" />
+                  {label}
+                </button>
+              );
+            })}
+          </div>
+        </section>
+
         {/* Profile card */}
-        <section className="mb-10 pb-10 border-b border-gray-100">
-          <h2 className="text-xs uppercase tracking-widest text-gray-400 mb-5">Profile</h2>
-          <div className="flex items-center gap-4">
-            {user?.avatar_url ? (
-              <img src={user.avatar_url} alt="" className="w-14 h-14 rounded-full object-cover" />
-            ) : (
-              <div className="w-14 h-14 rounded-full bg-black text-white flex items-center justify-center text-xl font-bold">
-                {avatarLetter}
-              </div>
-            )}
-            <div>
-              <div className="flex items-center gap-2">
+        <section className="mb-10 pb-10 border-b border-gray-100 dark:border-zinc-800">
+          <h2 className="text-xs uppercase tracking-widest text-gray-400 dark:text-zinc-500 mb-5">Profile</h2>
+
+          <div className="flex items-start gap-5">
+            {/* Avatar + upload overlay */}
+            <div className="relative group shrink-0">
+              {displayAvatar ? (
+                <img src={displayAvatar} alt="" className="w-16 h-16 rounded-full object-cover" />
+              ) : (
+                <div className="w-16 h-16 rounded-full bg-black text-white flex items-center justify-center text-2xl font-bold">
+                  {avatarLetter}
+                </div>
+              )}
+              {/* Camera overlay */}
+              <button
+                onClick={() => fileInputRef.current?.click()}
+                className="absolute inset-0 rounded-full bg-black/40 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center"
+              >
+                <Camera className="w-5 h-5 text-white" />
+              </button>
+              <input
+                ref={fileInputRef}
+                type="file"
+                accept="image/jpeg,image/png,image/gif,image/webp"
+                className="hidden"
+                onChange={handleFileChange}
+              />
+            </div>
+
+            {/* Name + email + upload controls */}
+            <div className="flex-1">
+              <div className="flex items-center gap-2 mb-1">
                 <User className="w-3.5 h-3.5 text-gray-400" />
                 <span className="text-sm font-medium">{user?.display_name || 'Explorer'}</span>
               </div>
-              <div className="flex items-center gap-2 mt-1">
+              <div className="flex items-center gap-2">
                 <Mail className="w-3.5 h-3.5 text-gray-400" />
                 <span className="text-sm text-gray-500">{user?.email}</span>
               </div>
+
+              {/* Upload controls — shown only when a file is selected */}
+              {selectedFile && (
+                <div className="mt-3 flex items-center gap-2">
+                  <span className="text-xs text-gray-400 truncate max-w-[140px]">{selectedFile.name}</span>
+                  <button
+                    onClick={handleAvatarUpload}
+                    disabled={uploadingAvatar}
+                    className="text-xs px-3 py-1.5 bg-black text-white hover:bg-yggen-teal transition-colors disabled:opacity-50 flex items-center gap-1.5"
+                  >
+                    {uploadingAvatar ? <Loader2 className="w-3 h-3 animate-spin" /> : null}
+                    {uploadingAvatar ? 'Uploading...' : 'Save photo'}
+                  </button>
+                  <button onClick={() => { setSelectedFile(null); setPreviewUrl(null); }}
+                    className="text-xs text-gray-400 hover:text-red-400 transition-colors">
+                    Cancel
+                  </button>
+                </div>
+              )}
+              {!selectedFile && (
+                <button
+                  onClick={() => fileInputRef.current?.click()}
+                  className="mt-3 text-xs text-gray-400 hover:text-black transition-colors underline underline-offset-2"
+                >
+                  Change profile picture
+                </button>
+              )}
             </div>
           </div>
         </section>

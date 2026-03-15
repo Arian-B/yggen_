@@ -25,14 +25,15 @@ class GraphGenerator:
         # 2. Extract links
         links = wikipedia_service.get_page_links(root_topic)
 
-        # 3. Determine domain
-        domain = wikipedia_service.get_primary_domain(page_data.get("categories", []))
+        # 3. Determine Wikipedia category
+        category = wikipedia_service.get_clean_category(page_data.get("categories", []))
 
         # 4. Build graph structure mirroring the original schema
         root_node = {
             "topic": page_data["title"],
             "level": 0,
-            "primary_domain": domain,
+            "primary_domain": category,   # kept for backward compat
+            "category": category,
             "secondary_domains": [],
             "difficulty_score": 50,
             "abstraction_score": 50,
@@ -46,7 +47,7 @@ class GraphGenerator:
             advanced_nodes.append({
                 "topic": title,
                 "level": 1,
-                "primary_domain": domain,
+                "primary_domain": category,
                 "secondary_domains": [],
                 "difficulty_score": 55,
                 "abstraction_score": 55,
@@ -59,7 +60,7 @@ class GraphGenerator:
             see_also_nodes.append({
                 "topic": title,
                 "level": 1,
-                "primary_domain": domain,
+                "primary_domain": category,
                 "secondary_domains": [],
                 "difficulty_score": 50,
                 "abstraction_score": 50,

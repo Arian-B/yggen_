@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { motion } from 'framer-motion';
 import { Eye, EyeOff, Mail, Lock } from 'lucide-react';
@@ -8,11 +8,16 @@ const API_BASE = 'http://localhost:8000/api';
 
 const LoginPage = () => {
   const navigate = useNavigate();
-  const { login } = useAuth();
+  const { login, isAuthenticated } = useAuth();
   const [form, setForm] = useState({ email: '', password: '' });
   const [showPass, setShowPass] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
+
+  // Already logged in → go home
+  useEffect(() => {
+    if (isAuthenticated) navigate('/', { replace: true });
+  }, [isAuthenticated, navigate]);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -25,7 +30,18 @@ const LoginPage = () => {
         body: JSON.stringify(form)
       });
       const data = await res.json();
-      if (!res.ok) throw new Error(data.detail || 'Login failed');
+      if (!res.ok) {
+        const msg: string = data.detail || 'Login failed';
+        // Account not found → send to register with email pre-filled
+        const notFound = msg.toLowerCase().includes('invalid email') ||
+                         msg.toLowerCase().includes('not found') ||
+                         res.status === 404;
+        if (notFound) {
+          navigate(`/register?email=${encodeURIComponent(form.email)}`);
+          return;
+        }
+        throw new Error(msg);
+      }
       login(data.access_token, {
         user_id: data.user_id,
         email: data.email,

@@ -1,11 +1,15 @@
 @import "tailwindcss";
 
+/* ── Tailwind v4: enable class-based dark mode ─────────────────────────────
+   This makes dark:XYZ utilities work when <html> has class="dark"          */
+@custom-variant dark (&:where(.dark, .dark *));
+
 @theme {
   --color-yggen-teal: #00ADB5;
   --color-yggen-dim-teal: rgba(0, 173, 181, 0.1);
   --color-yggen-black: #000000;
   --color-yggen-grid: #f0f0f0;
-  
+
   --background-image-grid-pattern: radial-gradient(#e5e5e5 1px, transparent 1px);
   --background-size-grid-sm: 40px 40px;
 }
@@ -14,33 +18,65 @@
   body {
     @apply bg-white text-black antialiased selection:bg-yggen-teal selection:text-white;
     font-feature-settings: "ss01", "ss02", "cv01", "cv02";
+    transition: background-color 0.2s, color 0.2s;
   }
 }
 
+/* ── Global dark mode overrides ────────────────────────────────────────────
+   Covers all pages without needing dark: variants on every element.
+   Uses [class~=] attribute selector which matches exact class tokens.       */
+
+html.dark body {
+  background-color: #09090b; /* zinc-950 */
+  color: #f4f4f5;            /* zinc-100 */
+  color-scheme: dark;
+}
+
+/* Backgrounds */
+html.dark .bg-white        { background-color: #09090b !important; }
+html.dark .bg-gray-50      { background-color: #18181b !important; }
+html.dark .bg-gray-100     { background-color: #27272a !important; }
+html.dark .bg-gray-200     { background-color: #3f3f46 !important; }
+html.dark .bg-black        { background-color: #000000 !important; }
+
+/* Text */
+html.dark .text-black      { color: #f4f4f5 !important; }
+html.dark .text-gray-900   { color: #e4e4e7 !important; }
+html.dark .text-gray-800   { color: #d4d4d8 !important; }
+html.dark .text-gray-700   { color: #a1a1aa !important; }
+html.dark .text-gray-600   { color: #71717a !important; }
+html.dark .text-gray-500   { color: #52525b  !important; }
+
+/* Borders */
+html.dark .border-gray-50  { border-color: #18181b !important; }
+html.dark .border-gray-100 { border-color: #27272a !important; }
+html.dark .border-gray-200 { border-color: #3f3f46 !important; }
+html.dark .border-gray-300 { border-color: #52525b !important; }
+html.dark .border-black    { border-color: #a1a1aa !important; }
+
+/* Wiki article content in dark mode */
+html.dark .wiki-article    { color: #e4e4e7 !important; }
+html.dark .wiki-article h2,
+html.dark .wiki-article h3,
+html.dark .wiki-article h4 { color: #f4f4f5 !important; border-color: #3f3f46 !important; }
+html.dark .wiki-article table th { background-color: #18181b !important; border-color: #3f3f46 !important; }
+html.dark .wiki-article table td { border-color: #3f3f46 !important; }
+html.dark .wiki-article .infobox  { background-color: #18181b !important; border-color: #3f3f46 !important; }
+html.dark .wiki-article .infobox caption { background-color: #000 !important; }
+html.dark .wiki-article .thumb    { background-color: #18181b !important; border-color: #3f3f46 !important; }
+html.dark .wiki-article figure img { border-color: #3f3f46 !important; }
+html.dark .wiki-article .hatnote  { color: #a1a1aa !important; }
+
 /* Custom Scrollbar */
-::-webkit-scrollbar {
-  width: 4px;
-}
+::-webkit-scrollbar       { width: 4px; }
+::-webkit-scrollbar-track { background: white; }
+::-webkit-scrollbar-thumb { background: #e5e7eb; border-radius: 9999px; }
+::-webkit-scrollbar-thumb:hover { background: #00ADB5; }
 
-::-webkit-scrollbar-track {
-  @apply bg-white;
-}
+html.dark ::-webkit-scrollbar-track { background: #09090b; }
+html.dark ::-webkit-scrollbar-thumb { background: #3f3f46; }
 
-::-webkit-scrollbar-thumb {
-  @apply bg-gray-200 rounded-full hover:bg-yggen-teal transition-colors;
-}
-
-/* Glow Utilities - Minimal */
-.glow-text {
-  text-shadow: 0 0 15px rgba(0, 173, 181, 0.3);
-}
-
-.glow-box {
-  box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.05); /* Subtle border instead of glow */
-  transition: all 0.3s ease;
-}
-
-.glow-box:hover {
-  box-shadow: 0 5px 15px rgba(0, 0, 0, 0.05);
-  border-color: var(--color-yggen-teal);
-}
+/* Glow Utilities */
+.glow-text { text-shadow: 0 0 15px rgba(0,173,181,0.3); }
+.glow-box  { box-shadow: 0 0 0 1px rgba(0,0,0,0.05); transition: all 0.3s ease; }
+.glow-box:hover { box-shadow: 0 5px 15px rgba(0,0,0,0.05); border-color: var(--color-yggen-teal); }

@@ -8,7 +8,7 @@ import { api } from '../services/api';
 import type { ExpeditionGraph } from '../services/api';
 
 // --- Custom Node Component ---
-interface WikiNodeData {
+interface WikiNodeData extends Record<string, unknown> {
   label: string;
   nodeType?: string;
   linkType?: string;

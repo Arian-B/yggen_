@@ -2,10 +2,10 @@
 Auth Routes — email/password + Google OAuth2
 All sessions backed by ArangoDB users collection, issued as JWT tokens.
 """
-from fastapi import APIRouter, HTTPException, Depends, Request
+from fastapi import APIRouter, HTTPException, Depends, Request, UploadFile, File
 from fastapi.responses import RedirectResponse
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
-import httpx
+import httpx, os, pathlib
 
 from app.models.user_models import UserLogin, UserRegister, TokenResponse
 from app.services.auth_service import auth_service
@@ -214,33 +214,72 @@ async def wikipedia_connect(request: Request):
 
 
 @router.get("/wikipedia/callback")
-async def wikipedia_callback(code: str = None, state: str = None, error: str = None):
+async def wikipedia_callback(request: Request, code: str = None, state: str = None, error: str = None):
     """
     MediaWiki redirects here. Exchange code for token, fetch profile,
     link the Wikipedia username to the user identified by `state`.
     """
+    import logging as _logging, traceback as _tb
+    _log = _logging.getLogger(__name__)
+
+    # Log EVERYTHING Wikimedia sends so we can diagnose any error
+    _log.info(f"[WP callback] ALL params: {dict(request.query_params)}")
+
     if error or not code or not state:
+        error_desc = request.query_params.get("error_description", "")
+        _log.warning(f"[WP callback] early exit: error={error!r}, desc={error_desc!r}, code={'yes' if code else 'no'}, state={'yes' if state else 'no'}")
         return RedirectResponse(f"{settings.FRONTEND_URL}/settings?error=wikipedia_cancelled")
 
+
     try:
-        async with httpx.AsyncClient() as client:
-            token_resp = await client.post(WIKIPEDIA_TOKEN_URL, data={
-                "grant_type": "authorization_code",
-                "code": code,
-                "client_id": settings.WIKIPEDIA_CLIENT_ID,
-                "client_secret": settings.WIKIPEDIA_CLIENT_SECRET,
-                "redirect_uri": settings.WIKIPEDIA_REDIRECT_URI
-            })
+        WP_UA = "wikiyggen_/1.0 (https://github.com/Arian-B/yggen_; contact@wikiyggen.dev)"
+        async with httpx.AsyncClient(timeout=15.0, headers={"User-Agent": WP_UA}) as client:
+            # Wikimedia OAuth 2.0: send credentials in POST body (client_secret_post)
+            token_resp = await client.post(
+                WIKIPEDIA_TOKEN_URL,
+                data={
+                    "grant_type": "authorization_code",
+                    "code": code,
+                    "client_id": settings.WIKIPEDIA_CLIENT_ID,
+                    "client_secret": settings.WIKIPEDIA_CLIENT_SECRET,
+                    "redirect_uri": settings.WIKIPEDIA_REDIRECT_URI
+                },
+                headers={"Content-Type": "application/x-www-form-urlencoded", "User-Agent": WP_UA}
+            )
+            _log.info(f"[WP token] status={token_resp.status_code} body={token_resp.text[:800]}")
+
+            # If POST body failed, try Basic Auth fallback
+            if token_resp.status_code != 200:
+                import base64
+                creds_b64 = base64.b64encode(
+                    f"{settings.WIKIPEDIA_CLIENT_ID}:{settings.WIKIPEDIA_CLIENT_SECRET}".encode()
+                ).decode()
+                token_resp = await client.post(
+                    WIKIPEDIA_TOKEN_URL,
+                    data={"grant_type": "authorization_code", "code": code, "redirect_uri": settings.WIKIPEDIA_REDIRECT_URI},
+                    headers={"Content-Type": "application/x-www-form-urlencoded", "Authorization": f"Basic {creds_b64}"}
+                )
+                _log.info(f"[WP token basic-auth] status={token_resp.status_code} body={token_resp.text[:800]}")
+
+            if token_resp.status_code != 200:
+                import urllib.parse as _up
+                err_msg = _up.quote(token_resp.text[:200])
+                _log.error(f"[WP token] both methods FAILED: {token_resp.text}")
+                return RedirectResponse(f"{settings.FRONTEND_URL}/settings?error=wikipedia_token_failed&detail={err_msg}")
+
             token_data = token_resp.json()
             access_token = token_data.get("access_token")
             if not access_token:
-                return RedirectResponse(f"{settings.FRONTEND_URL}/settings?error=wikipedia_token_failed")
+                _log.error(f"[WP token] no access_token in: {token_data}")
+                return RedirectResponse(f"{settings.FRONTEND_URL}/settings?error=wikipedia_token_failed&detail=no_access_token")
 
             profile_resp = await client.get(
                 WIKIPEDIA_PROFILE_URL,
                 headers={"Authorization": f"Bearer {access_token}"}
             )
+            _log.info(f"[WP profile] status={profile_resp.status_code} body={profile_resp.text[:400]}")
             profile = profile_resp.json()
+
 
         wikipedia_id  = str(profile.get("sub", ""))
         username      = profile.get("username", "")
@@ -264,7 +303,9 @@ async def wikipedia_callback(code: str = None, state: str = None, error: str = N
         )
 
     except Exception:
+        _log.error(f"Wikipedia callback exception:\n{_tb.format_exc()}")
         return RedirectResponse(f"{settings.FRONTEND_URL}/settings?error=wikipedia_server_error")
+
 
 
 # ── Connected Accounts ─────────────────────────────────────────────────────
@@ -306,3 +347,44 @@ async def disconnect_account(provider: str, current_user: dict = Depends(get_cur
     db.db.collection('users').update(update)
     return {"disconnected": provider}
 
+
+# ── Avatar Upload ─────────────────────────────────────────────────────────────
+
+@router.post("/avatar")
+async def upload_avatar(
+    file: UploadFile = File(...),
+    current_user: dict = Depends(get_current_user)
+):
+    """
+    Upload a profile picture. Accepts JPEG/PNG/GIF/WebP up to 5 MB.
+    Saves to static/avatars/{user_id}.ext and updates avatar_url in ArangoDB.
+    """
+    ALLOWED_TYPES = {"image/jpeg", "image/png", "image/gif", "image/webp"}
+    MAX_SIZE = 5 * 1024 * 1024  # 5 MB
+
+    if file.content_type not in ALLOWED_TYPES:
+        raise HTTPException(status_code=400, detail=f"Use JPEG, PNG, GIF, or WebP. Got: {file.content_type}")
+
+    contents = await file.read()
+    if len(contents) > MAX_SIZE:
+        raise HTTPException(status_code=400, detail="File too large. Maximum 5 MB.")
+
+    ext_map = {"image/jpeg": "jpg", "image/png": "png", "image/gif": "gif", "image/webp": "webp"}
+    ext = ext_map[file.content_type]
+    user_id = current_user["_key"]
+    filename = f"{user_id}.{ext}"
+
+    avatar_dir = pathlib.Path("static/avatars")
+    avatar_dir.mkdir(parents=True, exist_ok=True)
+    # Remove old avatars for this user
+    for old in avatar_dir.glob(f"{user_id}.*"):
+        old.unlink(missing_ok=True)
+
+    (avatar_dir / filename).write_bytes(contents)
+
+    avatar_url = f"{settings.BACKEND_URL}/static/avatars/{filename}"
+
+    from app.database.connection import db
+    db.db.collection('users').update({"_key": user_id, "avatar_url": avatar_url})
+
+    return {"avatar_url": avatar_url}

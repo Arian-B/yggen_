@@ -67,6 +67,12 @@ export const getAuthHeader = (): Record<string, string> => {
 
 export const api = {
     expedition: {
+        search: async (query: string): Promise<{ results: Array<{ title: string; description: string; url: string }> }> => {
+            if (!query || query.trim().length < 2) return { results: [] };
+            const res = await fetch(`${API_BASE_URL}/expedition/search?q=${encodeURIComponent(query.trim())}`);
+            if (!res.ok) return { results: [] };
+            return res.json();
+        },
         create: async (topic: string, userId: string) => {
             const res = await fetch(`${API_BASE_URL}/expedition/create`, {
                 method: 'POST',

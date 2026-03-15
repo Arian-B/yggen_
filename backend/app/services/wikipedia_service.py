@@ -83,28 +83,48 @@ class WikipediaService:
             logger.error(f"Wikipedia search error: {e}")
             return []
 
-    def get_primary_domain(self, categories: list) -> str:
+    def get_clean_category(self, categories: list) -> str:
         """
-        Heuristically determines the primary knowledge domain from Wikipedia categories.
+        Returns the most meaningful Wikipedia category string for an article.
+        Filters out maintenance, meta, and overly-specific categories so we get
+        a clean human-readable label like "Quantum mechanics" or "Ancient Rome".
         """
-        domain_keywords = {
-            "Mathematics": ["math", "algebra", "geometry", "calculus", "topology", "number theory"],
-            "Physics": ["physics", "quantum", "relativity", "mechanics", "thermodynamics"],
-            "Computer Science": ["computer", "algorithm", "software", "programming", "machine learning", "artificial intelligence"],
-            "Biology": ["biology", "genetics", "evolution", "cell", "organism", "ecology"],
-            "Chemistry": ["chemistry", "chemical", "molecule", "reaction", "element"],
-            "History": ["history", "war", "empire", "ancient", "medieval", "revolution"],
-            "Philosophy": ["philosophy", "ethics", "logic", "metaphysics", "epistemology"],
-            "Economics": ["economics", "market", "finance", "trade", "monetary"],
-            "Geography": ["geography", "country", "continent", "ocean", "river"],
-        }
+        # Patterns that indicate maintenance/meta categories — skip these
+        SKIP_PATTERNS = [
+            "articles", "pages", "cs1", "wikiproject", "wikipedia",
+            "use ", "all ", "good ", "featured ", "disambiguation",
+            "redirects", "accuracy", "cleanup", "stub", "short description",
+            "template", "cite", "bot", "infobox", "dab", "iso ",
+            "webarchive", "nocat", "births", "deaths", "living people",
+            "people from", "people by", "members of", "alumni of",
+            "graduates of", "lists of", "years in", "21st-century",
+            "20th-century", "19th-century", "18th-century",
+        ]
 
-        lower_cats = " ".join(categories).lower()
-        for domain, keywords in domain_keywords.items():
-            if any(kw in lower_cats for kw in keywords):
-                return domain
+        def is_meaningful(cat: str) -> bool:
+            lower = cat.lower()
+            # Strip "Category:" prefix if present
+            lower = lower.replace("category:", "").strip()
+            # Skip if it contains any maintenance pattern
+            if any(p in lower for p in SKIP_PATTERNS):
+                return False
+            # Skip very long categories (usually overly specific)
+            if len(lower) > 50:
+                return False
+            # Skip single-word all-lowercase (usually too generic)
+            return True
+
+        for cat in categories:
+            # Normalise: strip "Category:" prefix
+            clean = cat.replace("Category:", "").strip()
+            if is_meaningful(clean):
+                return clean
 
         return "General"
+
+    # Keep for backwards compatibility
+    def get_primary_domain(self, categories: list) -> str:
+        return self.get_clean_category(categories)
 
 
 wikipedia_service = WikipediaService()
