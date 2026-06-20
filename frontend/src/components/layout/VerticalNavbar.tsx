@@ -23,7 +23,7 @@ const VerticalNavbar = () => {
 
   // Inactivity tracking for auto-hide
   useEffect(() => {
-    let timer: NodeJS.Timeout;
+    let timer: ReturnType<typeof setTimeout>;
 
     const handleMouseMove = (e: MouseEvent) => {
       // If mouse is near the left edge, show navbar
