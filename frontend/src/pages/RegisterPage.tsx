@@ -38,7 +38,7 @@ const RegisterPage = () => {
         email: data.email,
         display_name: data.display_name,
         avatar_url: data.avatar_url
-      });
+      }, true);
       navigate('/');
     } catch (err: any) {
       setError(err.message);

@@ -12,6 +12,7 @@ const LoginPage = () => {
   const [form, setForm] = useState({ email: '', password: '' });
   const [showPass, setShowPass] = useState(false);
   const [loading, setLoading] = useState(false);
+  const [rememberMe, setRememberMe] = useState(true);
   const [error, setError] = useState('');
 
   // Already logged in → go home
@@ -47,7 +48,7 @@ const LoginPage = () => {
         email: data.email,
         display_name: data.display_name,
         avatar_url: data.avatar_url
-      });
+      }, rememberMe);
       navigate('/');
     } catch (err: any) {
       setError(err.message);
@@ -57,6 +58,7 @@ const LoginPage = () => {
   };
 
   const handleGoogleLogin = () => {
+    localStorage.setItem('wikiyggen_remember_me', rememberMe ? 'true' : 'false');
     window.location.href = `${API_BASE}/auth/google`;
   };
 
@@ -93,7 +95,7 @@ const LoginPage = () => {
         {/* Google Button */}
         <button
           onClick={handleGoogleLogin}
-          className="w-full flex items-center justify-center gap-3 px-4 py-3 border border-gray-200 text-sm hover:border-black transition-colors mb-6"
+          className="w-full flex items-center justify-center gap-3 px-4 py-3 border border-gray-200 text-sm hover:border-black transition-colors mb-6 cursor-pointer"
         >
           <svg className="w-4 h-4" viewBox="0 0 24 24">
             <path fill="#4285F4" d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z"/>
@@ -137,6 +139,18 @@ const LoginPage = () => {
               className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-300 hover:text-black">
               {showPass ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
             </button>
+          </div>
+
+          <div className="flex items-center justify-between pb-1">
+            <label className="flex items-center gap-2 cursor-pointer select-none text-xs text-gray-500">
+              <input
+                type="checkbox"
+                checked={rememberMe}
+                onChange={e => setRememberMe(e.target.checked)}
+                className="rounded border-gray-300 text-yggen-teal focus:ring-yggen-teal w-3.5 h-3.5"
+              />
+              Remember me for 30 days
+            </label>
           </div>
 
           {error && <p className="text-red-500 text-xs">{error}</p>}

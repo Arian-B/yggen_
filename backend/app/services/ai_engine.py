@@ -9,6 +9,8 @@ from app.services.providers.gemini_provider import GeminiProvider
 from app.services.providers.groq_provider import GroqProvider
 from app.services.providers.openrouter_provider import OpenRouterProvider
 
+from app.services.providers.ollama_provider import OllamaProvider
+
 # Configure logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -18,7 +20,8 @@ class AIEngine:
         self.providers = {
             "gemini": GeminiProvider(),
             "groq": GroqProvider(),
-            "openrouter": OpenRouterProvider()
+            "openrouter": OpenRouterProvider(),
+            "ollama": OllamaProvider()
         }
         self.max_retries = 2
 
@@ -28,11 +31,7 @@ class AIEngine:
         """
         try:
             # Fetch Expedition Details
-            exp_cursor = db.db.aql.execute(
-                "FOR e IN expeditions FILTER e.expedition_id == @id RETURN e",
-                bind_vars={"id": expedition_id}
-            )
-            expedition = next(exp_cursor, None)
+            expedition = db.db.collection('expeditions').get(expedition_id)
             
             if not expedition:
                 return "Context: Unknown Expedition."
@@ -67,9 +66,8 @@ class AIEngine:
         """
         provider = self.providers.get(provider_name)
         if not provider:
-            logger.warning(f"Provider {provider_name} not found, falling back to OpenRouter")
-            provider = self.providers["openrouter"]
-            # Fallback model defaults might vary, but OpenRouterProvider handles default if model is None
+            logger.warning(f"Provider {provider_name} not found, falling back to Groq")
+            provider = self.providers["groq"]
 
         for attempt in range(self.max_retries + 1):
             try:
@@ -86,18 +84,20 @@ class AIEngine:
             except Exception as e:
                 logger.warning(f"AI Attempt {attempt+1} failed ({provider_name}): {e}")
                 if attempt == self.max_retries:
-                    # If primary fails, try fallback ONCE
-                    if provider_name != "openrouter":
-                        logger.warning("Switching to FALLBACK provider: OpenRouter")
+                    # If primary fails, try fallback chain (Gemini -> Groq -> OpenRouter)
+                    fallback_chain = ["groq", "openrouter"] if provider_name == "gemini" else ["openrouter"]
+                    for fallback_name in fallback_chain:
+                        if fallback_name == provider_name:
+                            continue
+                        logger.warning(f"Switching to FALLBACK provider: {fallback_name}")
                         try:
-                            fallback_provider = self.providers["openrouter"]
+                            fallback_provider = self.providers[fallback_name]
                             if method == "json":
                                 return await fallback_provider.generate_json(**kwargs)
                             else:
                                 return await fallback_provider.generate_text(**kwargs)
                         except Exception as fb_e:
-                             logger.error(f"Fallback failed: {fb_e}")
-                             raise fb_e
+                            logger.error(f"Fallback to {fallback_name} failed: {fb_e}")
                     raise e
 
     async def generate_graph(self, root_topic: str, expedition_id: str = None) -> Dict[str, Any]:
@@ -238,5 +238,36 @@ class AIEngine:
         )
         
         return JSONValidator.validate_reflection_structure(response)
+
+    async def generate_polymath_content(self, topic: str, wiki_text: str) -> str:
+        """
+        Synthesizes Wikipedia raw text into structured polymathic markdown content (fallback).
+        """
+        provider_name, model_name = model_router.get_provider_config("longform")
+        
+        system_prompt = f"""You are a world-class polymath, researcher, and educator.
+Your task is to take raw Wikipedia article text for "{topic}" and rewrite/summarize it into a comprehensive, beautifully structured Markdown document.
+
+Rules:
+1. Maintain the exact same section and subsection hierarchy (using #, ##, ### headers) as the original Wikipedia article.
+2. EXCLUDE the "References", "See Also", "External Links", "Further Reading", and similar metadata sections.
+3. For each section, write a detailed, highly informative, polymathic summary. Explain concepts with depth.
+4. APPEND a final major section:
+   ## Beyond Wikipedia: Deep Dive & Insights
+   In this section, provide:
+   - Extra information and context from across the internet that the Wikipedia page might lack.
+   - 3-5 interesting and mind-blowing fun facts about the topic.
+   - Most important general knowledge and takeaways.
+5. The output must be pure Markdown (no code block wrappers, just raw text).
+"""
+        user_prompt = f"Raw Wikipedia text for '{topic}':\n\n{wiki_text[:8000]}\n\nProduce the polymathic markdown content."
+
+        return await self._execute_with_retry(
+            provider_name,
+            model_name,
+            "text",
+            system_prompt=system_prompt,
+            user_prompt=user_prompt
+        )
 
 ai_engine = AIEngine()

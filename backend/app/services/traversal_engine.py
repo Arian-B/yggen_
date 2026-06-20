@@ -35,7 +35,7 @@ class TraversalEngine:
         
         aql = """
         FOR edge IN edges
-            FILTER edge._from == @current_id AND edge.type == "advanced_of"
+            FILTER edge._from == @current_id AND edge.type == "embedded_link"
             RETURN edge._to
         """
         

@@ -16,4 +16,6 @@ wikipedia-api
 wikipedia
 beautifulsoup4
 lxml
-
+python-jose
+passlib[bcrypt]
+httpx

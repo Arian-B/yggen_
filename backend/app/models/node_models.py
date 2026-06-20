@@ -28,6 +28,7 @@ class Node(NodeBase):
     last_generated_at: Optional[datetime] = None
     created_at: datetime = Field(default_factory=datetime.utcnow)
     updated_at: datetime = Field(default_factory=datetime.utcnow)
+    completed: bool = False
 
     class Config:
         from_attributes = True

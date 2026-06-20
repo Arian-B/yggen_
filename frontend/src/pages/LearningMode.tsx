@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { motion, AnimatePresence } from 'framer-motion';
-import { Map, Sparkles, ExternalLink, ChevronDown, ChevronUp } from 'lucide-react';
+import { Map, Sparkles, ExternalLink, ChevronDown, ChevronUp, ArrowRight, ArrowLeft } from 'lucide-react';
 import { api, getAuthHeader, type NodeContent } from '../services/api';
 import { useAuth } from '../context/AuthContext';
 import ReflectionModal from '../components/ui/ReflectionModal';
@@ -30,163 +30,159 @@ const INITIAL_DRIFT: DriftState = {
   checking: false
 };
 
-// ── Wikipedia HTML renderer ───────────────────────────────────────────────────
-// Uses Wikipedia's full Parsoid HTML endpoint — same content as the desktop
-// Wikipedia page, with all images, infoboxes, equations, and references.
+// --- Custom React Markdown Parser ---
+
+interface WikiLink {
+  topic: string;
+  nodeId: string;
+}
+
+const renderInline = (text: string, linkedNodes: WikiLink[], onLinkClick: (nodeId: string, topic: string) => void) => {
+  const regex = /(\*\*.*?\*\*|\*.*?\*|\[.*?\]\(.*?\)|`.*?`)/g;
+  const parts = text.split(regex);
+
+  return parts.map((part, pidx) => {
+    if (part.startsWith('**') && part.endsWith('**')) {
+      return <strong key={pidx} className="font-bold text-black dark:text-white">{part.slice(2, -2)}</strong>;
+    }
+    if (part.startsWith('*') && part.endsWith('*')) {
+      return <em key={pidx} className="italic">{part.slice(1, -1)}</em>;
+    }
+    if (part.startsWith('`') && part.endsWith('`')) {
+      return <code key={pidx} className="bg-gray-150 dark:bg-zinc-900 text-yggen-teal px-1.5 py-0.5 rounded text-xs font-mono">{part.slice(1, -1)}</code>;
+    }
+    if (part.startsWith('[') && part.includes('](')) {
+      const match = part.match(/\[(.*?)\]\((.*?)\)/);
+      if (match) {
+        const linkText = match[1];
+        const linkTarget = match[2];
+        const cleanTarget = decodeURIComponent(linkTarget.replace(/_/g, ' ').replace(/^\.\//, '').replace(/^\/wiki\//, '')).trim().toLowerCase();
+        
+        const linkedNode = linkedNodes.find(
+          n => n.topic.toLowerCase() === cleanTarget || n.topic.toLowerCase() === linkText.toLowerCase()
+        );
+
+        if (linkedNode) {
+          return (
+            <a
+              key={pidx}
+              href="#"
+              onClick={(e) => { e.preventDefault(); onLinkClick(linkedNode.nodeId, linkedNode.topic); }}
+              className="text-yggen-teal hover:underline font-medium transition-all"
+            >
+              {linkText}
+            </a>
+          );
+        } else {
+          const isAbsolute = linkTarget.startsWith('http') || linkTarget.startsWith('//');
+          const href = isAbsolute ? linkTarget : `https://en.wikipedia.org/wiki/${linkTarget}`;
+          return (
+            <a
+              key={pidx}
+              href={href}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="text-yggen-teal hover:underline font-medium transition-all"
+            >
+              {linkText}
+            </a>
+          );
+        }
+      }
+    }
+
+    if (linkedNodes.length > 0) {
+      const sortedNodes = [...linkedNodes].sort((a, b) => b.topic.length - a.topic.length);
+      const escapeRegExp = (str: string) => str.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+      const patterns = sortedNodes.map(n => `\\b${escapeRegExp(n.topic)}\\b`).join('|');
+      
+      if (patterns) {
+        const topicRegex = new RegExp(`(${patterns})`, 'gi');
+        const textParts = part.split(topicRegex);
+        
+        return textParts.map((tPart, tIdx) => {
+          const matchingNode = sortedNodes.find(n => n.topic.toLowerCase() === tPart.toLowerCase());
+          if (matchingNode) {
+            return (
+              <a
+                key={`t-${pidx}-${tIdx}`}
+                href="#"
+                onClick={(e) => { e.preventDefault(); onLinkClick(matchingNode.nodeId, matchingNode.topic); }}
+                className="text-yggen-teal hover:underline font-medium transition-all"
+              >
+                {tPart}
+              </a>
+            );
+          }
+          return tPart;
+        });
+      }
+    }
+
+    return part;
+  });
+};
+
+const parseMarkdownToReact = (markdown: string, linkedNodes: WikiLink[], onLinkClick: (nodeId: string, topic: string) => void) => {
+  if (!markdown) return null;
+  const blocks = markdown.split(/\n\n+/);
+
+  return blocks.map((block, idx) => {
+    const trimmed = block.trim();
+    if (!trimmed) return null;
+
+    if (trimmed.startsWith('# ')) {
+      return <h1 key={idx} className="text-3xl md:text-4xl font-extrabold tracking-tight mt-10 mb-5 text-black dark:text-white">{renderInline(trimmed.slice(2), linkedNodes, onLinkClick)}</h1>;
+    }
+    if (trimmed.startsWith('## ')) {
+      return <h2 key={idx} className="text-2xl md:text-3xl font-bold tracking-tight mt-8 mb-4 pb-2 border-b border-gray-200 dark:border-zinc-800 text-black dark:text-white">{renderInline(trimmed.slice(3), linkedNodes, onLinkClick)}</h2>;
+    }
+    if (trimmed.startsWith('### ')) {
+      return <h3 key={idx} className="text-xl md:text-2xl font-semibold tracking-tight mt-6 mb-3 text-black dark:text-white">{renderInline(trimmed.slice(4), linkedNodes, onLinkClick)}</h3>;
+    }
+    if (trimmed.startsWith('#### ')) {
+      return <h4 key={idx} className="text-lg font-semibold mt-4 mb-2 text-black dark:text-white">{renderInline(trimmed.slice(5), linkedNodes, onLinkClick)}</h4>;
+    }
+
+    if (trimmed.startsWith('- ') || trimmed.startsWith('* ') || trimmed.match(/^\d+\.\s/)) {
+      const lines = trimmed.split('\n');
+      const isNumbered = trimmed.match(/^\d+\.\s/);
+      
+      const items = lines.map((line, lidx) => {
+        let content = line.trim();
+        if (content.startsWith('- ') || content.startsWith('* ')) {
+          content = content.slice(2);
+        } else {
+          content = content.replace(/^\d+\.\s/, '');
+        }
+        return <li key={lidx} className="mb-2 leading-relaxed">{renderInline(content, linkedNodes, onLinkClick)}</li>;
+      });
+
+      if (isNumbered) {
+        return <ol key={idx} className="list-decimal pl-6 mb-6 text-gray-700 dark:text-zinc-350">{items}</ol>;
+      } else {
+        return <ul key={idx} className="list-disc pl-6 mb-6 text-gray-700 dark:text-zinc-350">{items}</ul>;
+      }
+    }
+
+    return <p key={idx} className="text-base text-gray-700 dark:text-zinc-300 leading-relaxed mb-6">{renderInline(trimmed, linkedNodes, onLinkClick)}</p>;
+  });
+};
 
 const WikipediaArticle = ({
-  topic,
+  content,
   linkedNodes,
   onLinkClick,
 }: {
   topic: string;
+  content: string;
   linkedNodes: WikiLink[];
   onLinkClick: (nodeId: string, topic: string) => void;
 }) => {
-  const [html, setHtml] = useState('');
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState('');
-  const containerRef = useRef<HTMLDivElement>(null);
-
-  useEffect(() => {
-    if (!topic) return;
-    setLoading(true);
-    setHtml('');
-    setError('');
-
-    const slug = encodeURIComponent(topic.trim().replace(/ /g, '_'));
-    const ua = 'wikiyggen_/1.0 (https://github.com/Arian-B/yggen_)';
-
-    // Primary: full Parsoid HTML (complete article, all sections)
-    fetch(`https://en.wikipedia.org/api/rest_v1/page/html/${slug}`, {
-      headers: { 'Api-User-Agent': ua }
-    })
-      .then(r => {
-        if (!r.ok) throw new Error(`status ${r.status}`);
-        return r.text();   // returns full HTML document
-      })
-      .then(fullDoc => {
-        // Extract just the <body> content
-        const parser = new DOMParser();
-        const doc = parser.parseFromString(fullDoc, 'text/html');
-        const body = doc.body;
-
-        // Remove edit-section links, hidden elements, footer navboxes (too noisy)
-        body.querySelectorAll('.mw-editsection, .noprint, .navbox, .sistersitebox, #toc').forEach(el => el.remove());
-
-        // Fix protocol-relative src on images and media
-        body.querySelectorAll('img[src], img[data-src]').forEach(el => {
-          const img = el as HTMLImageElement;
-          const src = img.getAttribute('src') || img.getAttribute('data-src') || '';
-          if (src.startsWith('//')) img.src = 'https:' + src;
-          else if (src.startsWith('./')) img.src = `https://en.wikipedia.org/wiki/${src.slice(2)}`;
-          img.style.maxWidth = '100%';
-          img.style.height = 'auto';
-        });
-
-        setHtml(body.innerHTML);
-      })
-      .catch(() => {
-        // Fallback 1: mobile-sections (structured JSON)
-        fetch(`https://en.wikipedia.org/api/rest_v1/page/mobile-sections/${slug}`, {
-          headers: { 'Api-User-Agent': ua }
-        })
-          .then(r => r.ok ? r.json() : Promise.reject())
-          .then(data => {
-            const lead = data.lead?.sections?.[0]?.text || '';
-            const rest = (data.remaining?.sections || [])
-              .map((s: any) => `<h2>${s.line || ''}</h2>${s.text || ''}`)
-              .join('');
-            setHtml(lead + rest);
-          })
-          .catch(() => {
-            // Fallback 2: plain summary
-            fetch(`https://en.wikipedia.org/api/rest_v1/page/summary/${slug}`)
-              .then(r => r.json())
-              .then(d => setHtml(`<p>${d.extract_html || d.extract || 'No content available.'}</p>`))
-              .catch(() => setError('Could not load Wikipedia content.'));
-          });
-      })
-      .finally(() => setLoading(false));
-  }, [topic]);
-
-  // Wire up internal wiki links → expedition node navigation
-  useEffect(() => {
-    if (!html || !containerRef.current) return;
-    const container = containerRef.current;
-
-    container.querySelectorAll('a[href]').forEach(el => {
-      const a = el as HTMLAnchorElement;
-      const href = a.getAttribute('href') || '';
-      const wikiMatch = href.match(/^(?:\.\/|\/wiki\/)([^#?:]+)/);
-      if (!wikiMatch) { a.target = '_blank'; a.rel = 'noopener noreferrer'; return; }
-
-      const wikiTitle = decodeURIComponent(wikiMatch[1].replace(/_/g, ' '));
-      const linkedNode = linkedNodes.find(
-        n => n.topic.toLowerCase() === wikiTitle.toLowerCase()
-      );
-
-      if (linkedNode) {
-        a.style.color = '#00ADB5';
-        a.style.fontWeight = '500';
-        a.onclick = e => { e.preventDefault(); onLinkClick(linkedNode.nodeId, linkedNode.topic); };
-      } else {
-        const abs = href.startsWith('//') ? 'https:' + href
-          : href.startsWith('./') ? `https://en.wikipedia.org/wiki/${href.slice(2)}`
-          : href.startsWith('/') ? `https://en.wikipedia.org${href}`
-          : href;
-        a.href = abs;
-        a.target = '_blank';
-        a.rel = 'noopener noreferrer';
-      }
-    });
-  }, [html, linkedNodes, onLinkClick]);
-
-  if (loading) return (
-    <div className="text-yggen-teal text-xs animate-pulse tracking-widest uppercase py-8">
-      Loading Wikipedia article...
-    </div>
-  );
-  if (error) return <p className="text-red-400 text-sm">{error}</p>;
-
   return (
-    <>
-      <style>{`
-        .wiki-article { font-family: 'Linux Libertine', Georgia, serif; color: #1a1a1a; font-size: 1rem; line-height: 1.75; }
-        .wiki-article p { margin-bottom: 1em; }
-        .wiki-article h1 { display: none; }
-        .wiki-article h2 { font-size: 1.35rem; font-weight: 700; margin: 2em 0 0.5em; padding-bottom: 4px; border-bottom: 1px solid #e5e7eb; }
-        .wiki-article h3 { font-size: 1.1rem; font-weight: 600; margin: 1.5em 0 0.4em; }
-        .wiki-article h4 { font-size: 0.95rem; font-weight: 600; margin: 1.2em 0 0.3em; }
-        .wiki-article figure { margin: 1.5em 0; }
-        .wiki-article figure img { max-width: 100%; height: auto; border-radius: 6px; border: 1px solid #e5e7eb; display: block; }
-        .wiki-article figcaption { font-size: 0.78rem; color: #6b7280; margin-top: 6px; }
-        .wiki-article table { border-collapse: collapse; margin: 1.5em 0; font-size: 0.88rem; width: auto; max-width: 100%; }
-        .wiki-article table th { background: #f9fafb; padding: 6px 10px; text-align: left; border: 1px solid #e5e7eb; font-weight: 600; }
-        .wiki-article table td { padding: 6px 10px; border: 1px solid #e5e7eb; vertical-align: top; }
-        .wiki-article .infobox, .wiki-article .infobox_v3 { float: right; clear: right; margin: 0 0 1.5em 1.5em; max-width: 300px; min-width: 200px; font-size: 0.82rem; border: 1px solid #e5e7eb; background: #f9fafb; }
-        .wiki-article .infobox th, .wiki-article .infobox td { padding: 4px 8px; font-size: 0.8rem; border: 1px solid #e5e7eb; }
-        .wiki-article .infobox caption { font-weight: 700; padding: 6px; background: #222; color: white; text-align: center; font-size: 0.85rem; }
-        .wiki-article ul, .wiki-article ol { padding-left: 1.5em; margin-bottom: 1em; }
-        .wiki-article li { margin-bottom: 0.3em; }
-        .wiki-article .mwe-math-element { display: inline-block; overflow-x: auto; vertical-align: middle; }
-        .wiki-article .mwe-math-element img { border: none !important; display: inline; }
-        .wiki-article .hatnote { font-style: italic; color: #6b7280; border-left: 3px solid #00ADB5; padding-left: 10px; margin-bottom: 1em; font-size: 0.9rem; }
-        .wiki-article sup { font-size: 0.7em; }
-        .wiki-article sup a { color: #9ca3af; }
-        .wiki-article .reflist, .wiki-article ol.references { font-size: 0.8rem; color: #6b7280; }
-        .wiki-article .thumb { border: 1px solid #e5e7eb; padding: 4px; margin: 0 0 1em 1em; float: right; clear: right; max-width: 250px; background: #fafafa; font-size: 0.78rem; }
-        .wiki-article .thumbcaption { font-size: 0.75rem; color: #6b7280; padding-top: 4px; }
-        @media (max-width: 640px) {
-          .wiki-article .infobox, .wiki-article .thumb { float: none; max-width: 100%; margin: 0 0 1em 0; }
-        }
-      `}</style>
-      <div
-        ref={containerRef}
-        className="wiki-article"
-        dangerouslySetInnerHTML={{ __html: html }}
-      />
-    </>
+    <div className="wiki-article text-black dark:text-zinc-100">
+      {parseMarkdownToReact(content, linkedNodes, onLinkClick)}
+    </div>
   );
 };
 
@@ -202,6 +198,11 @@ const LearningMode = () => {
   const [linkedNodes, setLinkedNodes] = useState<WikiLink[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
+
+  // Streaming state
+  const [streamedContent, setStreamedContent] = useState('');
+  const [isStreaming, setIsStreaming] = useState(false);
+  const [streamStatus, setStreamStatus] = useState('');
 
   // AI Summary state
   const [summary, setSummary] = useState('');
@@ -221,51 +222,78 @@ const LearningMode = () => {
   const [reflectionFeedback, setReflectionFeedback] = useState('');
   const [isRetry, setIsRetry] = useState(false);
 
+  // traversal choice panel
+  const [showOptionsPanel, setShowOptionsPanel] = useState(false);
+
   useEffect(() => {
     if (!nodeId) return;
+
+    // Reset all state for new node
     setLoading(true);
+    setContent(null);
+    setStreamedContent('');
+    setIsStreaming(false);
+    setStreamStatus('');
     setSummary('');
     setKeyPoints([]);
     setSummaryOpen(false);
     setDrift(INITIAL_DRIFT);
     setDriftSummary('');
+    setError('');
 
-    const fetchNode = async () => {
-      try {
-        const data = await api.node.get(nodeId);
+    // Start streaming
+    const abort = api.node.stream(nodeId, {
+      onMetadata: (data) => {
+        // Page renders immediately with topic, domain, nav buttons, etc.
         setContent(data);
+        setLoading(false);
+        setIsStreaming(true);
 
-        // Write expedition context so VerticalNavbar can build the Map link
+        // Write expedition context for the sidebar map link
         if (data.expedition_id) {
           localStorage.setItem('wikiyggen_current_expedition', JSON.stringify({
             node_id: nodeId,
-            expedition_id: data.expedition_id
+            expedition_id: data.expedition_id,
           }));
         }
 
+        // Fetch linked graph nodes for inline highlighting
         if (data.expedition_id) {
-          try {
-            const graph = await api.expedition.getGraph(data.expedition_id);
+          api.expedition.getGraph(data.expedition_id).then((graph) => {
             const links: WikiLink[] = graph.nodes
               .filter(n => n.node_id !== nodeId)
               .map(n => ({ topic: n.topic, nodeId: n.node_id }));
             setLinkedNodes(links);
-          } catch { /* non-critical */ }
+          }).catch(() => { /* non-critical */ });
         }
-      } catch {
-        setError('Failed to load article.');
-      } finally {
-        setLoading(false);
-      }
-    };
-    fetchNode();
+      },
+      onStatus: (msg) => {
+        setStreamStatus(msg);
+      },
+      onChunk: (text) => {
+        setStreamedContent(prev => prev + text);
+      },
+      onDone: () => {
+        setIsStreaming(false);
+        setStreamStatus('');
+        // Persist final streamed content into the content object so
+        // downstream components (sources, links) still work correctly
+        setContent(prev => prev ? { ...prev, content: undefined } : prev);
+      },
+      onError: (err) => {
+        setIsStreaming(false);
+        setStreamStatus('');
+        if (!content) {
+          setError(`Failed to load article: ${err}`);
+          setLoading(false);
+        }
+      },
+    });
 
-    // Clear expedition context on unmount
     return () => {
-      // Only clear if we're leaving the /learn route entirely
-      // (handled by next useEffect run, so no-op here is fine)
+      abort(); // Cancel stream on unmount / nodeId change
     };
-  }, [nodeId]);
+  }, [nodeId]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const handleLoadSummary = async () => {
     if (!nodeId || summary) { setSummaryOpen(v => !v); return; }
@@ -335,10 +363,8 @@ const LearningMode = () => {
         setIsReflectionOpen(true);
         setReflectionFeedback('');
         setIsRetry(false);
-      } else if (result.next_node_id) {
-        navigate(`/learn/${result.next_node_id}`);
       } else {
-        navigate(`/map/${content.expedition_id}`);
+        setShowOptionsPanel(true);
       }
     } catch { /* no-op */ }
   };
@@ -349,8 +375,7 @@ const LearningMode = () => {
       const result = await api.node.reflect(content.node_id, answer, userId);
       if (result.passed) {
         setIsReflectionOpen(false);
-        if (result.next_node_id) navigate(`/learn/${result.next_node_id}`);
-        else navigate(`/map/${content.expedition_id}`);
+        setShowOptionsPanel(true);
       } else {
         setReflectionFeedback(result.feedback || 'Try again.');
         setIsRetry(true);
@@ -360,32 +385,45 @@ const LearningMode = () => {
     }
   };
 
+  const handleSelectNextTopic = async (nextTopic: string) => {
+    if (!content) return;
+    try {
+      setShowOptionsPanel(false);
+      setLoading(true);
+      const result = await api.node.selectNext(content.node_id, nextTopic, content.expedition_id);
+      navigate(`/learn/${result.next_node_id}`);
+    } catch (err) {
+      console.error("Error selects next path node:", err);
+      setLoading(false);
+    }
+  };
+
   if (loading) return (
-    <div className="min-h-screen flex items-center justify-center bg-white">
+    <div className="min-h-screen flex items-center justify-center bg-white dark:bg-zinc-950">
       <div className="text-yggen-teal animate-pulse text-xs tracking-widest uppercase">Loading article...</div>
     </div>
   );
 
   if (error || !content) return (
-    <div className="min-h-screen flex flex-col items-center justify-center text-black">
+    <div className="min-h-screen flex flex-col items-center justify-center text-black dark:text-zinc-100 bg-white dark:bg-zinc-950">
       <div className="text-red-500 mb-4">{error || 'Article not found'}</div>
-      <button onClick={() => navigate('/')} className="text-gray-400 hover:text-black underline text-sm">Return Home</button>
+      <button onClick={() => navigate('/')} className="text-gray-400 dark:text-zinc-500 hover:text-black dark:hover:text-white underline text-sm">Return Home</button>
     </div>
   );
 
   return (
-    <div className="min-h-screen bg-white text-black">
+    <div className="min-h-screen bg-white dark:bg-zinc-950 text-black dark:text-zinc-100 transition-colors duration-200">
       <div className="max-w-3xl mx-auto px-6 pt-16 pb-40">
 
         {/* Breadcrumb */}
-        <div className="text-xs text-gray-400 tracking-widest uppercase mb-10 flex items-center gap-2">
+        <div className="text-xs text-gray-400 dark:text-zinc-550 tracking-widest uppercase mb-10 flex items-center gap-2">
           <span>{(content as any).primary_domain || 'General'}</span>
           <span>/</span>
-          <span className="text-black">{content.topic}</span>
+          <span className="text-black dark:text-zinc-100">{content.topic}</span>
         </div>
 
         {/* Title */}
-        <h1 className="text-5xl md:text-7xl font-bold tracking-tighter mb-4 text-black">
+        <h1 className="text-5xl md:text-7xl font-bold tracking-tighter mb-4 text-black dark:text-white">
           {content.topic}
         </h1>
 
@@ -395,7 +433,7 @@ const LearningMode = () => {
             href={content.wikipedia_url}
             target="_blank"
             rel="noopener noreferrer"
-            className="inline-flex items-center gap-1 text-xs text-gray-400 hover:text-black mb-8 transition-colors"
+            className="inline-flex items-center gap-1 text-xs text-gray-400 dark:text-zinc-500 hover:text-black dark:hover:text-zinc-100 mb-8 transition-colors"
           >
             <ExternalLink className="w-3 h-3" />
             View on Wikipedia
@@ -419,19 +457,19 @@ const LearningMode = () => {
           {driftSummary && (
             <motion.div
               initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }}
-              className="mb-8 p-4 border border-amber-200 bg-amber-50"
+              className="mb-8 p-4 border border-amber-200 dark:border-amber-900 bg-amber-50 dark:bg-amber-950/20"
             >
-              <div className="text-[10px] uppercase tracking-widest text-amber-600 mb-2">
+              <div className="text-[10px] uppercase tracking-widest text-amber-600 dark:text-amber-550 mb-2">
                 Drift peek — {drift.candidateTopic || 'Off-topic article'}
               </div>
               {driftSummaryLoading ? (
                 <div className="text-xs text-amber-500 animate-pulse">Loading summary...</div>
               ) : (
-                <p className="text-sm text-amber-900 leading-relaxed">{driftSummary}</p>
+                <p className="text-sm text-amber-900 dark:text-amber-200 leading-relaxed">{driftSummary}</p>
               )}
               <button
                 onClick={() => setDriftSummary('')}
-                className="mt-3 text-[10px] text-amber-500 hover:text-amber-800 uppercase tracking-widest"
+                className="mt-3 text-[10px] text-amber-500 hover:text-amber-800 dark:hover:text-amber-400 uppercase tracking-widest"
               >
                 Dismiss
               </button>
@@ -440,10 +478,10 @@ const LearningMode = () => {
         </AnimatePresence>
 
         {/* AI Summary Toggle */}
-        <div className="mb-10 border border-gray-100 rounded-sm overflow-hidden">
+        <div className="mb-10 border border-gray-100 dark:border-zinc-800 rounded-sm overflow-hidden">
           <button
             onClick={handleLoadSummary}
-            className="w-full flex items-center justify-between px-4 py-3 text-xs tracking-widest uppercase text-gray-500 hover:text-black hover:bg-gray-50 transition-colors"
+            className="w-full flex items-center justify-between px-4 py-3 text-xs tracking-widest uppercase text-gray-500 dark:text-zinc-400 hover:text-black dark:hover:text-white hover:bg-gray-50 dark:hover:bg-zinc-900 transition-colors"
           >
             <div className="flex items-center gap-2">
               <Sparkles className="w-3.5 h-3.5 text-yggen-teal" />
@@ -460,16 +498,16 @@ const LearningMode = () => {
                 transition={{ duration: 0.25 }}
                 className="overflow-hidden"
               >
-                <div className="px-4 py-4 border-t border-gray-100 bg-gray-50">
+                <div className="px-4 py-4 border-t border-gray-100 dark:border-zinc-800 bg-gray-50 dark:bg-zinc-900/40">
                   {summaryLoading ? (
                     <div className="text-yggen-teal text-xs animate-pulse">Generating summary...</div>
                   ) : (
                     <>
-                      <p className="text-sm text-gray-700 leading-relaxed mb-3">{summary}</p>
+                      <p className="text-sm text-gray-700 dark:text-zinc-300 leading-relaxed mb-3">{summary}</p>
                       {keyPoints.length > 0 && (
                         <ul className="space-y-1.5">
-                          {keyPoints.map((pt, i) => (
-                            <li key={i} className="text-xs text-gray-600 flex items-start gap-2">
+                           {keyPoints.map((pt, i) => (
+                            <li key={i} className="text-xs text-gray-600 dark:text-zinc-450 flex items-start gap-2">
                               <span className="text-yggen-teal mt-0.5">—</span>
                               {pt}
                             </li>
@@ -484,22 +522,40 @@ const LearningMode = () => {
           </AnimatePresence>
         </div>
 
-        {/* ── Wikipedia Article with real HTML, images, equations ── */}
+        {/* ── Live streaming status badge ── */}
+        {isStreaming && streamStatus && (
+          <motion.div
+            initial={{ opacity: 0, y: -4 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0 }}
+            className="mb-6 flex items-center gap-2 text-xs text-yggen-teal tracking-widest uppercase"
+          >
+            <span className="inline-block w-1.5 h-1.5 rounded-full bg-yggen-teal animate-pulse" />
+            {streamStatus}
+          </motion.div>
+        )}
+
+        {/* ── Article (streamed or cached) ── */}
         <article>
           <WikipediaArticle
             topic={content.topic}
+            content={streamedContent || content.content || ''}
             linkedNodes={linkedNodes}
             onLinkClick={handleLinkClick}
           />
+          {/* Blinking cursor while streaming */}
+          {isStreaming && (
+            <span className="inline-block w-2 h-5 bg-yggen-teal ml-0.5 align-middle animate-[blink_1s_step-end_infinite]" />
+          )}
         </article>
 
         {/* Sources */}
         {content.sources && content.sources.length > 0 && (
-          <div className="mt-12 pt-6 border-t border-gray-100">
-            <span className="text-xs uppercase tracking-widest text-gray-400 block mb-3">Source</span>
+          <div className="mt-12 pt-6 border-t border-gray-100 dark:border-zinc-800">
+            <span className="text-xs uppercase tracking-widest text-gray-400 dark:text-zinc-550 block mb-3">Source</span>
             {content.sources.map((src, i) => (
               <a key={i} href={src} target="_blank" rel="noopener noreferrer"
-                className="text-sm text-gray-400 hover:text-black transition-colors underline underline-offset-4 decoration-yggen-teal block">
+                className="text-sm text-gray-400 dark:text-zinc-500 hover:text-black dark:hover:text-zinc-200 transition-colors underline underline-offset-4 decoration-yggen-teal block">
                 {src}
               </a>
             ))}
@@ -508,15 +564,15 @@ const LearningMode = () => {
 
         {/* Related nodes */}
         {linkedNodes.length > 0 && (
-          <div className="mt-12 pt-6 border-t border-gray-100">
-            <span className="text-xs uppercase tracking-widest text-gray-400 block mb-4">Related in this Expedition</span>
+          <div className="mt-12 pt-6 border-t border-gray-100 dark:border-zinc-800">
+            <span className="text-xs uppercase tracking-widest text-gray-400 dark:text-zinc-550 block mb-4">Related in this Expedition</span>
             <div className="flex flex-wrap gap-2">
               {linkedNodes.slice(0, 10).map(({ topic, nodeId: linkedId }) => (
                 <button
                   key={linkedId}
                   onClick={() => handleLinkClick(linkedId, topic)}
                   disabled={drift.checking}
-                  className="text-xs px-3 py-1.5 border border-gray-200 text-gray-600 hover:border-yggen-teal hover:text-black transition-all disabled:opacity-40"
+                  className="text-xs px-3 py-1.5 border border-gray-200 dark:border-zinc-800 text-gray-600 dark:text-zinc-400 hover:border-yggen-teal hover:text-black dark:hover:text-white transition-all disabled:opacity-40"
                 >
                   {topic}
                 </button>
@@ -527,20 +583,34 @@ const LearningMode = () => {
       </div>
 
       {/* Sticky Footer */}
-      <div className="fixed bottom-0 left-16 right-0 bg-white border-t border-gray-100 px-6 py-4 flex justify-between items-center z-20">
+      <div className="fixed bottom-0 left-16 right-0 bg-white dark:bg-zinc-950 border-t border-gray-100 dark:border-zinc-850 px-6 py-4 flex justify-between items-center z-20 transition-colors duration-200">
         <button
           onClick={() => content && navigate(`/map/${content.expedition_id}`)}
-          className="flex items-center gap-2 text-xs text-gray-400 hover:text-black tracking-widest uppercase transition-colors"
+          className="flex items-center gap-2 text-xs text-gray-400 dark:text-zinc-500 hover:text-black dark:hover:text-zinc-200 tracking-widest uppercase transition-colors"
         >
           <Map className="w-4 h-4" />
-          Galaxy Map
+          Map Grid
         </button>
-        <button
-          onClick={handleContinue}
-          className="text-xs px-6 py-2.5 bg-black text-white tracking-widest uppercase hover:bg-yggen-teal transition-colors"
-        >
-          Continue Expedition
-        </button>
+
+        <div className="flex items-center gap-3">
+          {content.previous_node_id && (
+            <button
+              onClick={() => navigate(`/learn/${content.previous_node_id}`)}
+              className="cursor-pointer flex items-center gap-1.5 text-xs px-5 py-2.5 bg-transparent text-gray-500 dark:text-zinc-400 hover:text-black dark:hover:text-white hover:bg-gray-100 dark:hover:bg-zinc-800 border border-gray-200 dark:border-zinc-800 hover:border-gray-400 dark:hover:border-zinc-650 rounded-sm tracking-widest uppercase transition-colors"
+            >
+              <ArrowLeft className="w-3.5 h-3.5" />
+              Previous Checkpoint
+            </button>
+          )}
+
+          <button
+            onClick={handleContinue}
+            className="flex items-center gap-1.5 text-xs px-6 py-2.5 bg-black dark:bg-zinc-900 text-white dark:text-zinc-150 border border-transparent dark:border-zinc-850 tracking-widest uppercase hover:bg-yggen-teal hover:border-yggen-teal hover:shadow-[0_0_15px_#00ADB5] hover:text-white transition-all duration-300 rounded-sm"
+          >
+            Continue Expedition
+            <ArrowRight className="w-3.5 h-3.5" />
+          </button>
+        </div>
       </div>
 
       {/* Drift Modal */}
@@ -564,6 +634,61 @@ const LearningMode = () => {
         feedback={reflectionFeedback}
         isRetry={isRetry}
       />
+
+      {/* Dynamic Next Options Panel */}
+      <AnimatePresence>
+        {showOptionsPanel && content && (
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            className="fixed inset-0 bg-black/60 backdrop-blur-sm z-50 flex items-center justify-center p-4"
+          >
+            <motion.div
+              initial={{ scale: 0.95, y: 20 }}
+              animate={{ scale: 1, y: 0 }}
+              exit={{ scale: 0.95, y: 20 }}
+              className="bg-white/95 dark:bg-zinc-900/90 border border-gray-250 dark:border-zinc-800 rounded-xl p-8 max-w-lg w-full shadow-2xl backdrop-blur-md text-black dark:text-white flex flex-col gap-6"
+            >
+              <div>
+                <h3 className="text-xl font-bold tracking-tight text-black dark:text-white mb-2">Continue Your Expedition</h3>
+                <p className="text-sm text-zinc-400">Choose the next topic to branch your expedition path.</p>
+              </div>
+              
+              <div className="max-h-[300px] overflow-y-auto pr-1 space-y-2 custom-scrollbar">
+                {content.next_options && content.next_options.length > 0 ? (
+                  content.next_options.map((topic, i) => (
+                    <button
+                      key={i}
+                      onClick={() => handleSelectNextTopic(topic)}
+                      className="w-full text-left px-4 py-3 rounded-lg border border-gray-200 dark:border-zinc-800 bg-gray-50/55 dark:bg-zinc-950/40 hover:bg-yggen-teal/10 hover:border-yggen-teal text-sm transition-all text-black dark:text-zinc-350 hover:text-black dark:hover:text-white"
+                    >
+                      {topic}
+                    </button>
+                  ))
+                ) : (
+                  <div className="text-zinc-500 text-xs py-4 text-center">No related topics found. Proceed to Galaxy Map to choose.</div>
+                )}
+              </div>
+
+              <div className="flex justify-between items-center border-t border-gray-200 dark:border-zinc-800 pt-4">
+                <button
+                  onClick={() => { setShowOptionsPanel(false); navigate(`/map/${content.expedition_id}`); }}
+                  className="text-xs text-gray-500 dark:text-zinc-500 hover:text-black dark:hover:text-white tracking-widest uppercase transition-colors"
+                >
+                  Go to Galaxy Map
+                </button>
+                <button
+                  onClick={() => setShowOptionsPanel(false)}
+                  className="text-xs px-4 py-2 border border-gray-300 dark:border-zinc-700 text-black dark:text-zinc-400 hover:text-black dark:hover:text-white hover:border-black dark:hover:border-zinc-500 rounded-sm tracking-widest uppercase transition-colors"
+                >
+                  Cancel
+                </button>
+              </div>
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
     </div>
   );
 };

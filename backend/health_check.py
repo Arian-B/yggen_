@@ -18,12 +18,12 @@ try:
     db.connect()                       # Must be called explicitly outside FastAPI
     colls = [c["name"] for c in db.db.collections() if not c["name"].startswith("_")]
     prop  = db.db.properties()
-    print(f"  ✅ CONNECTED")
+    print(f"  [OK] CONNECTED")
     print(f"  DB          : {prop['name']}")
     print(f"  Collections : {colls}")
     results["ArangoDB"] = "OK"
 except Exception as e:
-    print(f"  ❌ FAIL — {e}")
+    print(f"  [FAIL] -- {e}")
     results["ArangoDB"] = f"FAIL: {e}"
 
 # ── 2. Wikipedia ─────────────────────────────────────
@@ -32,12 +32,12 @@ try:
     import wikipedia
     results_list = wikipedia.search("Black hole", results=3)
     snippet = wikipedia.summary("Black hole", sentences=1)
-    print(f"  ✅ CONNECTED")
+    print(f"  [OK] CONNECTED")
     print(f"  Search      : {results_list}")
     print(f"  Sample      : {snippet[:120]}...")
     results["Wikipedia"] = "OK"
 except Exception as e:
-    print(f"  ❌ FAIL — {e}")
+    print(f"  [FAIL] -- {e}")
     results["Wikipedia"] = f"FAIL: {e}"
 
 # ── 3. Groq ──────────────────────────────────────────
@@ -50,11 +50,11 @@ try:
         system_prompt="You are a test bot. Reply with exactly: CONNECTED",
         user_prompt="Ping."
     ))
-    print(f"  ✅ CONNECTED")
+    print(f"  [OK] CONNECTED")
     print(f"  Response    : {str(resp).strip()[:80]}")
     results["Groq"] = "OK"
 except Exception as e:
-    print(f"  ❌ FAIL — {e}")
+    print(f"  [FAIL] -- {e}")
     results["Groq"] = f"FAIL: {e}"
 
 # ── 4. Gemini ─────────────────────────────────────────
@@ -67,11 +67,11 @@ try:
         system_prompt="You are a test bot. Reply with exactly: CONNECTED",
         user_prompt="Ping."
     ))
-    print(f"  ✅ CONNECTED")
+    print(f"  [OK] CONNECTED")
     print(f"  Response    : {str(resp).strip()[:80]}")
     results["Gemini"] = "OK"
 except Exception as e:
-    print(f"  ❌ FAIL — {e}")
+    print(f"  [FAIL] -- {e}")
     results["Gemini"] = f"FAIL: {e}"
 
 # ── Summary ───────────────────────────────────────────
@@ -80,14 +80,14 @@ print("  RESULTS SUMMARY")
 print("=" * 52)
 all_ok = True
 for svc, status in results.items():
-    icon = "✅" if status == "OK" else "❌"
+    icon = "[OK]" if status == "OK" else "[FAIL]"
     print(f"  {icon}  {svc:<15} {status}")
     if status != "OK":
         all_ok = False
 
 print()
 if all_ok:
-    print("  🚀  All systems operational. Ready to launch!")
+    print("  [OK]  All systems operational. Ready to launch!")
 else:
-    print("  ⚠️   Some services need attention before launch.")
+    print("  [WARN] Some services need attention before launch.")
 print("=" * 52)

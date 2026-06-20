@@ -10,7 +10,7 @@ class GraphGenerator:
     No AI generation of topics — all graph structure comes from real Wikipedia data.
     """
 
-    def generate_initial_graph(self, root_topic: str) -> Dict[str, Any]:
+    async def generate_initial_graph(self, root_topic: str) -> Dict[str, Any]:
         """
         Fetches the Wikipedia page for root_topic and builds the initial
         graph structure from its embedded links and 'See Also' sections.
@@ -41,6 +41,32 @@ class GraphGenerator:
             "summary": page_data["summary"][:500] if page_data.get("summary") else ""
         }
 
+        # Try to get suggested prerequisites using AI Engine
+        prereq_nodes = []
+        try:
+            from app.services.ai_engine import ai_engine
+            ai_graph = await ai_engine.generate_graph(root_node["topic"])
+            ai_prereqs = ai_graph.get("prerequisites", [])
+            for prereq in ai_prereqs[:3]:  # Cap to 3 prerequisites
+                title = prereq.get("topic")
+                if title:
+                    # Verify availability on real Wikipedia API
+                    p_data = wikipedia_service.get_page(title)
+                    if p_data:
+                        prereq_nodes.append({
+                            "topic": p_data["title"],
+                            "level": -1,
+                            "primary_domain": prereq.get("primary_domain") or category,
+                            "secondary_domains": [],
+                            "difficulty_score": prereq.get("difficulty_score", 40),
+                            "abstraction_score": prereq.get("abstraction_score", 40),
+                            "wikipedia_url": p_data["url"],
+                            "summary": p_data["summary"][:500] if p_data.get("summary") else "",
+                            "link_type": "prerequisite"
+                        })
+        except Exception as e:
+            logger.warning(f"Failed to generate prerequisites via AI: {e}")
+
         # Embedded links become "advanced_of" connections (level +1)
         advanced_nodes = []
         for title in links["embedded_links"][:8]:  # Cap to 8 for initial graph
@@ -69,7 +95,7 @@ class GraphGenerator:
 
         return {
             "root": root_node,
-            "prerequisites": [],   # Not applicable for Wikipedia sourcing at this stage
+            "prerequisites": prereq_nodes,
             "advanced": advanced_nodes,
             "cross_links": see_also_nodes
         }

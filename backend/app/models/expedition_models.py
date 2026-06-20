@@ -1,5 +1,5 @@
 from pydantic import BaseModel, Field
-from typing import Optional
+from typing import Optional, List
 from datetime import datetime
 import uuid
 
@@ -16,8 +16,10 @@ class Expedition(ExpeditionBase):
     domain: str = "General"          # Primary knowledge domain (from Wikipedia categories)
     global_xp_earned: int = 0
     nodes_visited: int = 0           # Count of articles actually read
+    traversal_path: List[str] = []   # Stack of node IDs representing the traversal history
     created_at: datetime = Field(default_factory=datetime.utcnow)
     last_activity: datetime = Field(default_factory=datetime.utcnow)
 
     class Config:
         from_attributes = True
+

@@ -12,7 +12,7 @@ class ExpeditionService:
     def __init__(self):
         self.db = db
 
-    def create_expedition(self, user_id: str, root_topic: str) -> dict:
+    async def create_expedition(self, user_id: str, root_topic: str) -> dict:
         """
         Creates a new expedition by fetching the Wikipedia graph structure.
         """
@@ -23,7 +23,7 @@ class ExpeditionService:
 
         # 1. Build graph from Wikipedia
         try:
-            graph_data = graph_generator.generate_initial_graph(root_topic)
+            graph_data = await graph_generator.generate_initial_graph(root_topic)
         except Exception as e:
             raise ValueError(f"Failed to build Wikipedia graph: {str(e)}")
 
@@ -36,16 +36,19 @@ class ExpeditionService:
 
         try:
             # 2. Create Expedition record
+            root_node_id = str(uuid.uuid4())
             expedition = Expedition(
                 user_id=user_id,
                 root_topic=graph_data['root']['topic'],
-                domain=detected_domain
+                domain=detected_domain,
+                traversal_path=[root_node_id]
             )
             self.store_expedition(expedition)
 
             # 3. Create Root Node
             root_data = graph_data['root']
             root_node = Node(
+                node_id=root_node_id,
                 expedition_id=expedition.expedition_id,
                 topic=root_data['topic'],
                 level=root_data['level'],
@@ -58,6 +61,23 @@ class ExpeditionService:
                 parent_node_id=None
             )
             self.store_node(root_node)
+
+            # 3b. Create Prerequisite nodes (Level -1) and link to root node
+            prereqs = []
+            for n_data in graph_data.get('prerequisites', []):
+                node = Node(
+                    expedition_id=expedition.expedition_id,
+                    topic=n_data['topic'],
+                    level=n_data['level'],
+                    primary_domain=n_data['primary_domain'],
+                    difficulty_score=n_data.get('difficulty_score', 40),
+                    abstraction_score=n_data.get('abstraction_score', 40),
+                    link_type='prerequisite',
+                    parent_node_id=root_node.node_id
+                )
+                self.store_node(node)
+                self.create_edge(node.node_id, root_node.node_id, "prerequisite_of")
+                prereqs.append(node)
 
             # 4. Embedded link nodes (Level +1)
             advanced = []
@@ -96,6 +116,7 @@ class ExpeditionService:
             return {
                 "expedition_id": expedition.expedition_id,
                 "root_node": root_node.dict(),
+                "prerequisites": [n.dict() for n in prereqs],
                 "linked_pages": [n.dict() for n in advanced],
                 "see_also": [n.dict() for n in cross_links]
             }
@@ -154,6 +175,17 @@ class ExpeditionService:
             "type": type
         }
         return self.db.db.collection('edges').insert(edge)
+
+    def archive_expedition(self, expedition_id: str):
+        try:
+            self.db.db.collection('expeditions').update(
+                {"_key": expedition_id},
+                {"state": "archived"}
+            )
+            return True
+        except Exception as e:
+            logger.error(f"Failed to archive expedition {expedition_id}: {e}")
+            return False
 
     def initialize_root_node(self):
         pass

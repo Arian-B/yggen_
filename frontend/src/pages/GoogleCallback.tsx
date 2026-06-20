@@ -20,6 +20,10 @@ const GoogleCallback = () => {
     const user_id = params.get('user_id');
     const display_name = params.get('display_name') || '';
 
+    const rememberMeVal = localStorage.getItem('wikiyggen_remember_me');
+    const rememberMe = rememberMeVal !== 'false'; // default to true
+    localStorage.removeItem('wikiyggen_remember_me');
+
     if (!token || !user_id) {
       navigate('/login?error=callback_failed');
       return;
@@ -38,7 +42,7 @@ const GoogleCallback = () => {
           avatar_url: user.avatar_url,
           total_xp: user.total_xp,
           level: user.level
-        });
+        }, rememberMe);
         navigate('/');
       })
       .catch(() => navigate('/login?error=callback_failed'));

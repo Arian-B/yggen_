@@ -3,11 +3,11 @@ import { AuthProvider } from './context/AuthContext';
 import ProtectedRoute from './components/layout/ProtectedRoute';
 import ExpeditionLayout from './layouts/ExpeditionLayout';
 import VerticalNavbar from './components/layout/VerticalNavbar';
-import LandingPage from './pages/LandingPage';
+import HomePage from './pages/HomePage';
 import LoginPage from './pages/LoginPage';
 import RegisterPage from './pages/RegisterPage';
 import GoogleCallback from './pages/GoogleCallback';
-import CreateExpedition from './pages/CreateExpedition';
+import ExplorePage from './pages/ExplorePage';
 import LearningMode from './pages/LearningMode';
 import MapMode from './pages/MapMode';
 import Library from './pages/Library';
@@ -45,17 +45,16 @@ function App() {
             <Route path="/register"       element={<RegisterPage />} />
             <Route path="/auth/callback"  element={<GoogleCallback />} />
 
-            {/* Landing — public but search requires auth */}
-            <Route path="/" element={<LandingPage />} />
+            {/* Landing — public */}
+            <Route path="/" element={<HomePage />} />
 
-            {/* Protected expedition routes (ExpeditionLayout already has VerticalNavbar,
-                but AppShell's navbar is fixed so we just need the outlet layout) */}
+            {/* Protected expedition routes */}
             <Route element={
               <ProtectedRoute>
                 <ExpeditionLayout />
               </ProtectedRoute>
             }>
-              <Route path="/create"       element={<CreateExpedition />} />
+              <Route path="/create"       element={<ExplorePage />} />
               <Route path="/learn/:id"    element={<LearningMode />} />
               <Route path="/map/:id"      element={<MapMode />} />
               <Route path="/library"      element={<Library />} />

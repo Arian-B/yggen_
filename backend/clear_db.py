@@ -30,8 +30,8 @@ for col_name in COLLECTIONS_TO_CLEAR:
     if db.has_collection(col_name):
         count_before = db.collection(col_name).count()
         db.collection(col_name).truncate()
-        print(f"  ✓  {col_name:18s} — cleared {count_before:,} documents")
+        print(f"  [OK]  {col_name:18s} -- cleared {count_before:,} documents")
     else:
-        print(f"  –  {col_name:18s} — collection not found, skipping")
+        print(f"  [-]   {col_name:18s} -- collection not found, skipping")
 
 print("\nDatabase is now empty. Ready for fresh start.")

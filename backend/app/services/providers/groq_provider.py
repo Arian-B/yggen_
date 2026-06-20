@@ -18,7 +18,8 @@ class GroqProvider(BaseProvider):
             model_name=model or settings.DEFAULT_FAST_MODEL,
             groq_api_key=self.api_key,
             temperature=temperature,
-            model_kwargs=kwargs
+            model_kwargs=kwargs,
+            max_retries=0
         )
 
     async def generate_text(self, system_prompt: str, user_prompt: str, model: str = None) -> str:

@@ -183,7 +183,7 @@ const SettingsPage = () => {
         {/* Header */}
         <div className="mb-12">
           <h1 className="text-3xl font-bold tracking-tighter mb-1">Settings</h1>
-          <p className="text-sm text-gray-400">Manage your account and connected services</p>
+          <p className="text-sm text-black dark:text-zinc-400">Manage your account and connected services</p>
         </div>
 
         {/* Feedback banners */}
@@ -208,7 +208,7 @@ const SettingsPage = () => {
 
         {/* Appearance — theme picker */}
         <section className="mb-10 pb-10 border-b border-gray-100 dark:border-zinc-800">
-          <h2 className="text-xs uppercase tracking-widest text-gray-400 dark:text-zinc-500 mb-5">Appearance</h2>
+          <h2 className="text-xs uppercase tracking-widest text-black dark:text-zinc-550 mb-5">Appearance</h2>
           <div className="grid grid-cols-3 gap-3">
             {([
               { value: 'light',  label: 'Light',  Icon: Sun },
@@ -223,7 +223,7 @@ const SettingsPage = () => {
                   className={`flex flex-col items-center gap-2 py-4 border text-xs font-medium tracking-wide transition-all
                     ${ active
                       ? 'border-yggen-teal text-yggen-teal bg-yggen-dim-teal'
-                      : 'border-gray-200 dark:border-zinc-700 text-gray-500 dark:text-zinc-400 hover:border-gray-400 dark:hover:border-zinc-500'
+                      : 'border-gray-200 dark:border-zinc-700 text-black dark:text-zinc-400 hover:border-gray-400 dark:hover:border-zinc-500'
                     }`}
                 >
                   <Icon className="w-4 h-4" />
@@ -236,7 +236,7 @@ const SettingsPage = () => {
 
         {/* Profile card */}
         <section className="mb-10 pb-10 border-b border-gray-100 dark:border-zinc-800">
-          <h2 className="text-xs uppercase tracking-widest text-gray-400 dark:text-zinc-500 mb-5">Profile</h2>
+          <h2 className="text-xs uppercase tracking-widest text-black dark:text-zinc-550 mb-5">Profile</h2>
 
           <div className="flex items-start gap-5">
             {/* Avatar + upload overlay */}
@@ -267,28 +267,28 @@ const SettingsPage = () => {
             {/* Name + email + upload controls */}
             <div className="flex-1">
               <div className="flex items-center gap-2 mb-1">
-                <User className="w-3.5 h-3.5 text-gray-400" />
+                <User className="w-3.5 h-3.5 text-black dark:text-zinc-400" />
                 <span className="text-sm font-medium">{user?.display_name || 'Explorer'}</span>
               </div>
               <div className="flex items-center gap-2">
-                <Mail className="w-3.5 h-3.5 text-gray-400" />
-                <span className="text-sm text-gray-500">{user?.email}</span>
+                <Mail className="w-3.5 h-3.5 text-black dark:text-zinc-400" />
+                <span className="text-sm text-black dark:text-zinc-450">{user?.email}</span>
               </div>
 
               {/* Upload controls — shown only when a file is selected */}
               {selectedFile && (
                 <div className="mt-3 flex items-center gap-2">
-                  <span className="text-xs text-gray-400 truncate max-w-[140px]">{selectedFile.name}</span>
+                  <span className="text-xs text-zinc-400 truncate max-w-[140px]">{selectedFile.name}</span>
                   <button
                     onClick={handleAvatarUpload}
                     disabled={uploadingAvatar}
-                    className="text-xs px-3 py-1.5 bg-black text-white hover:bg-yggen-teal transition-colors disabled:opacity-50 flex items-center gap-1.5"
+                    className="text-xs px-3 py-1.5 bg-yggen-teal text-white hover:shadow-[0_0_12px_#00ADB5] transition-all disabled:opacity-50 flex items-center gap-1.5"
                   >
                     {uploadingAvatar ? <Loader2 className="w-3 h-3 animate-spin" /> : null}
                     {uploadingAvatar ? 'Uploading...' : 'Save photo'}
                   </button>
                   <button onClick={() => { setSelectedFile(null); setPreviewUrl(null); }}
-                    className="text-xs text-gray-400 hover:text-red-400 transition-colors">
+                    className="text-xs text-zinc-400 hover:text-red-400 transition-colors">
                     Cancel
                   </button>
                 </div>
@@ -296,7 +296,7 @@ const SettingsPage = () => {
               {!selectedFile && (
                 <button
                   onClick={() => fileInputRef.current?.click()}
-                  className="mt-3 text-xs text-gray-400 hover:text-black transition-colors underline underline-offset-2"
+                  className="mt-3 text-xs text-zinc-600 dark:text-zinc-400 hover:text-yggen-teal dark:hover:text-yggen-teal transition-colors underline underline-offset-2"
                 >
                   Change profile picture
                 </button>
@@ -306,9 +306,9 @@ const SettingsPage = () => {
         </section>
 
         {/* Connected Accounts */}
-        <section className="mb-10 pb-10 border-b border-gray-100">
-          <h2 className="text-xs uppercase tracking-widest text-gray-400 mb-5">Connected Accounts</h2>
-          <p className="text-xs text-gray-400 mb-6 leading-relaxed">
+        <section className="mb-10 pb-10 border-b border-gray-100 dark:border-zinc-800">
+          <h2 className="text-xs uppercase tracking-widest text-black dark:text-zinc-550 mb-5">Connected Accounts</h2>
+          <p className="text-xs text-black dark:text-zinc-400 mb-6 leading-relaxed">
             Link external accounts to enhance your profile, enable single sign-on, and unlock platform-specific features.
           </p>
 
@@ -341,9 +341,9 @@ const SettingsPage = () => {
                           )}
                         </div>
                         {isConnected && info?.identifier ? (
-                          <div className="text-xs text-gray-400 mt-0.5">{info.identifier}</div>
+                          <div className="text-xs text-black dark:text-zinc-450 mt-0.5">{info.identifier}</div>
                         ) : (
-                          <div className="text-xs text-gray-400 mt-0.5">{provider.description}</div>
+                          <div className="text-xs text-black dark:text-zinc-450 mt-0.5">{provider.description}</div>
                         )}
                       </div>
                     </div>
@@ -383,10 +383,10 @@ const SettingsPage = () => {
 
         {/* Danger zone */}
         <section>
-          <h2 className="text-xs uppercase tracking-widest text-gray-400 mb-5">Account</h2>
+          <h2 className="text-xs uppercase tracking-widest text-black dark:text-zinc-550 mb-5">Account</h2>
           <button
             onClick={handleLogout}
-            className="flex items-center gap-2 text-sm text-gray-500 hover:text-red-500 transition-colors"
+            className="flex items-center gap-2 text-sm text-black dark:text-zinc-400 hover:text-red-500 transition-colors"
           >
             <LogOut className="w-4 h-4" />
             Sign out of wikiyggen_

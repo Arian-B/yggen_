@@ -14,6 +14,8 @@ export interface NodeContent {
     summary?: string;
     link_type?: 'embedded_link' | 'see_also_link' | null;
     node_type?: 'standard' | 'drift';
+    previous_node_id?: string | null;
+    next_options?: string[];
 }
 
 export interface GraphNode {
@@ -23,6 +25,7 @@ export interface GraphNode {
     link_type?: string | null;
     node_type?: string;
     wikipedia_url?: string;
+    completed?: boolean;
 }
 
 export interface GraphEdge {
@@ -61,7 +64,7 @@ export interface UserStats {
 }
 
 export const getAuthHeader = (): Record<string, string> => {
-    const token = localStorage.getItem('wikiyggen_token');
+    const token = localStorage.getItem('wikiyggen_token') || sessionStorage.getItem('wikiyggen_token');
     return token ? { Authorization: `Bearer ${token}` } : {};
 };
 
@@ -86,6 +89,14 @@ export const api = {
             const res = await fetch(`${API_BASE_URL}/expedition/${expeditionId}/graph`);
             if (!res.ok) throw new Error('Failed to fetch expedition graph');
             return res.json();
+        },
+        delete: async (expeditionId: string): Promise<{ message: string; expedition_id: string }> => {
+            const res = await fetch(`${API_BASE_URL}/expedition/${expeditionId}`, {
+                method: 'DELETE',
+                headers: getAuthHeader()
+            });
+            if (!res.ok) throw new Error('Failed to delete expedition');
+            return res.json();
         }
     },
     node: {
@@ -93,6 +104,71 @@ export const api = {
             const res = await fetch(`${API_BASE_URL}/expedition/node/${nodeId}`);
             if (!res.ok) throw new Error('Failed to fetch node');
             return res.json();
+        },
+        /**
+         * Connects to the SSE streaming endpoint for a node.
+         * Calls onMetadata immediately (page renders), then onChunk for each
+         * LLM token, then onDone when complete.
+         * Returns an abort function — call it to cancel the stream.
+         */
+        stream: (
+            nodeId: string,
+            callbacks: {
+                onMetadata: (data: NodeContent) => void;
+                onStatus:   (message: string)   => void;
+                onChunk:    (text: string)       => void;
+                onDone:     ()                   => void;
+                onError:    (err: string)        => void;
+            }
+        ): (() => void) => {
+            const ctrl = new AbortController();
+
+            (async () => {
+                try {
+                    const res = await fetch(`${API_BASE_URL}/expedition/node/${nodeId}/stream`, {
+                        signal: ctrl.signal,
+                    });
+                    if (!res.ok || !res.body) {
+                        callbacks.onError('Stream connection failed');
+                        return;
+                    }
+
+                    const reader  = res.body.getReader();
+                    const decoder = new TextDecoder();
+                    let   buffer  = '';
+
+                    while (true) {
+                        const { done, value } = await reader.read();
+                        if (done) break;
+
+                        buffer += decoder.decode(value, { stream: true });
+                        // SSE events are separated by \n\n
+                        const parts = buffer.split('\n\n');
+                        buffer = parts.pop() ?? '';
+
+                        for (const part of parts) {
+                            const line = part.trim();
+                            if (!line.startsWith('data: ')) continue;
+                            try {
+                                const event = JSON.parse(line.slice(6));
+                                switch (event.type) {
+                                    case 'metadata': callbacks.onMetadata(event as NodeContent); break;
+                                    case 'status':   callbacks.onStatus(event.text ?? '');       break;
+                                    case 'chunk':    callbacks.onChunk(event.text  ?? '');       break;
+                                    case 'done':     callbacks.onDone();                         break;
+                                    case 'error':    callbacks.onError(event.text  ?? 'Error');  break;
+                                }
+                            } catch { /* malformed SSE line — skip */ }
+                        }
+                    }
+                } catch (err: unknown) {
+                    if ((err as Error).name !== 'AbortError') {
+                        callbacks.onError((err as Error).message ?? 'Stream error');
+                    }
+                }
+            })();
+
+            return () => ctrl.abort();
         },
         getSummary: async (nodeId: string): Promise<{ summary: string; key_points: string[] }> => {
             const res = await fetch(`${API_BASE_URL}/expedition/node/${nodeId}/summary`);
@@ -121,6 +197,15 @@ export const api = {
             if (!res.ok) throw new Error('Failed to continue');
             return res.json();
         },
+        selectNext: async (nodeId: string, nextTopic: string, expeditionId: string): Promise<{ next_node_id: string }> => {
+            const res = await fetch(`${API_BASE_URL}/expedition/node/${nodeId}/select-next`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json', ...getAuthHeader() },
+                body: JSON.stringify({ next_topic: nextTopic, expedition_id: expeditionId })
+            });
+            if (!res.ok) throw new Error('Failed to select next node');
+            return res.json();
+        },
         reflect: async (nodeId: string, answer: string, userId: string): Promise<ReflectionResponse> => {
             const res = await fetch(`${API_BASE_URL}/expedition/node/${nodeId}/reflect`, {
                 method: 'POST',
@@ -129,6 +214,20 @@ export const api = {
             });
             if (!res.ok) throw new Error('Failed to submit reflection');
             return res.json();
+        },
+        archive: async (expeditionId: string): Promise<void> => {
+            const res = await fetch(`${API_BASE_URL}/expedition/${expeditionId}/archive`, {
+                method: 'PATCH',
+                headers: getAuthHeader()
+            });
+            if (!res.ok) throw new Error('Failed to archive expedition');
+        },
+        delete: async (expeditionId: string): Promise<void> => {
+            const res = await fetch(`${API_BASE_URL}/expedition/${expeditionId}`, {
+                method: 'DELETE',
+                headers: getAuthHeader()
+            });
+            if (!res.ok) throw new Error('Failed to delete expedition');
         }
     },
     user: {
@@ -145,6 +244,27 @@ export const api = {
             });
             if (!res.ok) throw new Error('Failed to fetch expeditions');
             return res.json();
+        },
+        getExpertise: async (userId: string): Promise<UserExpertiseProfile> => {
+            const res = await fetch(`${API_BASE_URL}/expedition/user/${userId}/expertise`, {
+                headers: getAuthHeader()
+            });
+            if (!res.ok) throw new Error('Failed to fetch user expertise');
+            return res.json();
         }
     }
 };
+
+export interface DomainExpertise {
+    domain: string;
+    articles_completed: number;
+    domain_xp: number;
+    average_difficulty: number;
+    depth: number;
+}
+
+export interface UserExpertiseProfile {
+    user_id: string;
+    breadth: number;
+    domains: Record<string, DomainExpertise>;
+}

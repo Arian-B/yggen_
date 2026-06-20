@@ -14,7 +14,7 @@ interface AuthContextType {
   token: string | null;
   isAuthenticated: boolean;
   isLoading: boolean;
-  login: (token: string, user: AuthUser) => void;
+  login: (token: string, user: AuthUser, rememberMe?: boolean) => void;
   logout: () => void;
   updateAvatar: (url: string) => void;
 }
@@ -36,9 +36,15 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
   const [token, setToken] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(true);
 
-  const login = useCallback((newToken: string, newUser: AuthUser) => {
-    localStorage.setItem('wikiyggen_token', newToken);
-    localStorage.setItem('wikiyggen_user', JSON.stringify(newUser));
+  const login = useCallback((newToken: string, newUser: AuthUser, rememberMe = true) => {
+    localStorage.removeItem('wikiyggen_token');
+    localStorage.removeItem('wikiyggen_user');
+    sessionStorage.removeItem('wikiyggen_token');
+    sessionStorage.removeItem('wikiyggen_user');
+
+    const storage = rememberMe ? localStorage : sessionStorage;
+    storage.setItem('wikiyggen_token', newToken);
+    storage.setItem('wikiyggen_user', JSON.stringify(newUser));
     setToken(newToken);
     setUser(newUser);
   }, []);
@@ -46,6 +52,8 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
   const logout = useCallback(() => {
     localStorage.removeItem('wikiyggen_token');
     localStorage.removeItem('wikiyggen_user');
+    sessionStorage.removeItem('wikiyggen_token');
+    sessionStorage.removeItem('wikiyggen_user');
     setToken(null);
     setUser(null);
   }, []);
@@ -54,15 +62,20 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
     setUser(prev => {
       if (!prev) return prev;
       const updated = { ...prev, avatar_url: url };
-      localStorage.setItem('wikiyggen_user', JSON.stringify(updated));
+      if (localStorage.getItem('wikiyggen_token')) {
+        localStorage.setItem('wikiyggen_user', JSON.stringify(updated));
+      } else {
+        sessionStorage.setItem('wikiyggen_user', JSON.stringify(updated));
+      }
       return updated;
     });
   }, []);
 
-  // On mount: restore session from localStorage, verify token with /me
+  // On mount: restore session, verify token with /me
   useEffect(() => {
-    const storedToken = localStorage.getItem('wikiyggen_token');
-    const storedUser = localStorage.getItem('wikiyggen_user');
+    const storedToken = localStorage.getItem('wikiyggen_token') || sessionStorage.getItem('wikiyggen_token');
+    const storedUser = localStorage.getItem('wikiyggen_user') || sessionStorage.getItem('wikiyggen_user');
+    const isRemembered = !!localStorage.getItem('wikiyggen_token');
 
     if (!storedToken) {
       setIsLoading(false);
@@ -77,12 +90,16 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
       } catch { /* corrupted */ }
     }
 
-    // Verify token is still valid with backend
     fetch(`${API_BASE}/auth/me`, {
       headers: { Authorization: `Bearer ${storedToken}` }
     })
       .then(r => {
-        if (!r.ok) throw new Error('Token expired');
+        if (!r.ok) {
+          if (r.status === 401 || r.status === 403) {
+            logout();
+          }
+          throw new Error('Token expired or invalid');
+        }
         return r.json();
       })
       .then(freshUser => {
@@ -94,11 +111,12 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
           total_xp: freshUser.total_xp,
           level: freshUser.level
         };
-        login(storedToken, authUser);
+        login(storedToken, authUser, isRemembered);
       })
-      .catch(() => {
-        // Token invalid — clear session
-        logout();
+      .catch((err) => {
+        // We do NOT call logout() here automatically anymore for network errors.
+        // If the backend is simply down or booting up, we keep the stored UI session intact.
+        console.warn("Failed to verify session with backend:", err);
       })
       .finally(() => setIsLoading(false));
   }, [login, logout]);

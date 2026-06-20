@@ -4,13 +4,21 @@
    This makes dark:XYZ utilities work when <html> has class="dark"          */
 @custom-variant dark (&:where(.dark, .dark *));
 
+:root {
+  --grid-color: rgba(0, 0, 0, 0.25);
+}
+
+html.dark {
+  --grid-color: rgba(255, 255, 255, 0.15);
+}
+
 @theme {
   --color-yggen-teal: #00ADB5;
   --color-yggen-dim-teal: rgba(0, 173, 181, 0.1);
   --color-yggen-black: #000000;
   --color-yggen-grid: #f0f0f0;
 
-  --background-image-grid-pattern: radial-gradient(#e5e5e5 1px, transparent 1px);
+  --background-image-grid-pattern: radial-gradient(var(--grid-color) 1px, transparent 1px);
   --background-size-grid-sm: 40px 40px;
 }
 
@@ -67,6 +75,24 @@ html.dark .wiki-article .thumb    { background-color: #18181b !important; border
 html.dark .wiki-article figure img { border-color: #3f3f46 !important; }
 html.dark .wiki-article .hatnote  { color: #a1a1aa !important; }
 
+/* ── Light Mode Specific Text & Icon Color Enforcements ──────────────────────
+   This ensures that all labels, metadata, and icons turn black/dark in light mode,
+   rather than remaining grey or white. */
+html:not(.dark) .text-gray-400,
+html:not(.dark) .text-zinc-400,
+html:not(.dark) .text-gray-500,
+html:not(.dark) .text-zinc-500,
+html:not(.dark) .text-zinc-555,
+html:not(.dark) .text-zinc-550,
+html:not(.dark) .text-zinc-600,
+html:not(.dark) .text-gray-600,
+html:not(.dark) .text-zinc-450,
+html:not(.dark) .text-zinc-350,
+html:not(.dark) .text-gray-300,
+html:not(.dark) .text-zinc-300 {
+  color: #000000 !important;
+}
+
 /* Custom Scrollbar */
 ::-webkit-scrollbar       { width: 4px; }
 ::-webkit-scrollbar-track { background: white; }
@@ -80,3 +106,4 @@ html.dark ::-webkit-scrollbar-thumb { background: #3f3f46; }
 .glow-text { text-shadow: 0 0 15px rgba(0,173,181,0.3); }
 .glow-box  { box-shadow: 0 0 0 1px rgba(0,0,0,0.05); transition: all 0.3s ease; }
 .glow-box:hover { box-shadow: 0 5px 15px rgba(0,0,0,0.05); border-color: var(--color-yggen-teal); }
+

@@ -14,7 +14,8 @@ class GeminiProvider(BaseProvider):
             model=model or settings.DEFAULT_SMART_MODEL,
             google_api_key=self.api_key,
             temperature=temperature,
-            convert_system_message_to_human=True
+            convert_system_message_to_human=True,
+            max_retries=0
         )
 
     async def generate_text(self, system_prompt: str, user_prompt: str, model: str = None) -> str:
